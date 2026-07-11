@@ -1,0 +1,398 @@
+# cat > /home/claude/JARVIS_AI_OS/kernel/orchestrator/orchestrator.py << 'PYEOF'
+"""
+JARVIS AI OS — Kernel Orchestrator
+=====================================
+Wires the cognitive layer together at runtime.
+Owns references to GoalManager, PlanningEngine, MemoryRouter, AgentRegistry,
+and all agent instances. Provides a unified control surface for the bootstrap.
+
+This is the central nervous system: it starts and stops all cognitive components
+in the correct order and exposes them to each other without creating circular imports.
+"""
+
+from __future__ import annotations
+
+import importlib
+import inspect
+from typing import Any
+
+from observability.logging.logger import get_logger
+from memory.router.memory_router import MemoryRouter
+from cognition.planning.goal_manager import GoalManager
+from cognition.planning.task_planner import PlanningEngine
+from kernel.registry.agent_registry import AgentRegistry
+from agents.coordinator.coordinator_agent import CoordinatorAgent
+
+log = get_logger(__name__)
+
+
+# P3-C: Lazy/guarded agent imports — prevents a single broken agent from
+# crashing the entire Orchestrator import at startup.
+def _import_agent(module_path: str, class_name: str):
+    """Import an agent class by dotted path, returning None on ImportError."""
+    try:
+        mod = importlib.import_module(module_path)
+        return getattr(mod, class_name)
+    except (ImportError, AttributeError) as exc:
+        log.warning("Could not import agent %s from %s: %s", class_name, module_path, exc)
+        return None
+
+
+ResearchAgent = _import_agent("agents.research.research_agent", "ResearchAgent")
+EngineeringAgent = _import_agent("agents.engineering.engineering_agent", "EngineeringAgent")
+AnalysisAgent = _import_agent("agents.analysis.analysis_agent", "AnalysisAgent")
+PlanningAgent = _import_agent("agents.planning.planning_agent", "PlanningAgent")
+CommunicationAgent = _import_agent("agents.communication.communication_agent", "CommunicationAgent")
+AutomationAgent = _import_agent("agents.automation.automation_agent", "AutomationAgent")
+VisionAgent = _import_agent("agents.vision.vision_agent", "VisionAgent")
+
+# AGRO_AGENT — Agent 07: Agriculture & Transport Business Manager (Nawal Parasi, Nepal)
+# Lazy import + crash-isolated: if agents/agro/ is missing or broken, JARVIS boots normally.
+AgroAgent = _import_agent("agents.agro.agro_agent", "AgroAgent")
+
+
+class Orchestrator:
+    """
+    Assembles and manages the full cognitive layer lifecycle.
+
+    Startup order:
+        1. Memory stores
+        2. MemoryRouter (wraps stores)
+        3. GoalManager
+        4. PlanningEngine
+        5. AgentRegistry
+        6. Agents (coordinator last)
+
+    Shutdown order: reverse.
+    """
+
+    def __init__(
+        self,
+        event_bus: Any,
+        model_router: Any = None,
+        memory_router: MemoryRouter | None = None,
+        tool_registry: Any = None,  # FIX 5-B: injected from bootstrap
+        action_coordinator: Any = None,  # wiring pass: actions/action_coordinator.py
+        proactive_engine: Any = None,    # wiring pass: cognition/intelligence/proactive_engine.py
+    ) -> None:
+        self._bus = event_bus
+        self._model = model_router
+        self.tool_registry = tool_registry  # shared with all agents
+        self.action_coordinator = action_coordinator  # shared with all agents
+        # NOTE: attribute name "proactive_engine" is load-bearing — server.py's
+        # ActivityObserver bridge (Phase 3, on_startup) does
+        # getattr(STATE.orchestrator, "proactive_engine", None) to find this
+        # instance and subscribe it to live activity snapshots. Do not rename.
+        self.proactive_engine = proactive_engine
+        self._ocr_pipeline = None      # injected via inject_perception() — FIX 7
+        self._screenshot_svc = None    # injected via inject_perception() — FIX 7
+
+        # Memory layer — must be provided by Bootstrap (singleton, already started).
+        # Orchestrator NEVER creates its own memory stack.
+        if memory_router is None:
+            raise ValueError(
+                "Orchestrator requires a pre-constructed MemoryRouter. "
+                "Pass the singleton from Bootstrap Phase 5 via the memory_router argument."
+            )
+        self.memory_router = memory_router
+
+        # Cognition layer
+        #
+        # Phase 3.5 — verified no fallback path here silently builds a second
+        # memory stack. Audited each component below against the single
+        # `memory_router` argument received above:
+        #   - GoalManager: takes no memory_router. By design it owns goal
+        #     *state* (status transitions, dependency graph), not memory —
+        #     it does not call MemoryRouter, and it does not construct one.
+        #     (It does have its own save_state()/load_state() JSON checkpoint
+        #     at memory/persistence/goal_manager_state.json for crash
+        #     recovery. That bypasses both MemoryRouter *and* the
+        #     Phase-1-canonical cognition-output store, MemoryManager
+        #     [memory/persistence/memory_manager.py — itself currently
+        #     uninstantiated anywhere in server.py/bootstrap.py]. Flagged for
+        #     Phase 4/11 as a third, undocumented persistence path for the
+        #     same concern — out of scope to refactor here, since 3.5 is a
+        #     verification pass for *this* Orchestrator's wiring, not a
+        #     goal-persistence redesign.)
+        #   - PlanningEngine: takes only `goal_manager` + later `model_router`/
+        #     `event_bus` via inject(); never touches memory_router, never
+        #     constructs one. In-memory `_plans` dict is not persisted at all
+        #     (lost on restart) — a real gap, but a missing-feature gap, not a
+        #     silent-fallback-memory-stack gap, so left untouched here too.
+        #   - ReasoningEngine: takes `embedding_service` (the same DI-container
+        #     singleton instance used everywhere else — see inject() in
+        #     start() below), not a full memory_router. It has no storage of
+        #     its own; callers (CoordinatorAgent) populate
+        #     ReasoningRequest.context_facts. Confirmed no MemoryRouter()
+        #     construction anywhere in cognition/reasoning/reasoning_engine.py.
+        #   - DecisionEngine: explicitly documented "No kernel, memory, or UI
+        #     dependencies" in its own module docstring — pure scoring logic
+        #     over a ReasoningOutput. Correct as-is; nothing to wire.
+        # Net result: none of the four ever construct their own MemoryRouter —
+        # grep for "MemoryRouter(" across the repo turns up exactly one
+        # non-test/non-bootstrap call site (server.py's STATE.memory_router),
+        # which IS the singleton passed in above. See the Phase 3.5 fix in
+        # server.py's on_startup() for the one real defect found during this
+        # verification: that singleton was being constructed with
+        # event_bus=None/model_router=None and only ever correctly re-injected
+        # when JARVIS_ENABLE_ORCHESTRATOR=true (via this class's start()
+        # method below) — meaning in the default/disabled config it ran its
+        # whole life degraded (no vectorisation, no memory events), silently.
+        self.goal_manager = GoalManager()
+        self.planning_engine = PlanningEngine(self.goal_manager)
+
+        # P1-A/B: ReasoningEngine + DecisionEngine — instantiated here,
+        # injected with event_bus/model_router in start().
+        try:
+            from cognition.reasoning.reasoning_engine import ReasoningEngine
+            from cognition.decision.decision_engine import DecisionEngine, DEFAULT_WEIGHTS
+            self.reasoning_engine = ReasoningEngine()
+            self.decision_engine = DecisionEngine(weights=DEFAULT_WEIGHTS)
+        except ImportError as exc:
+            log.warning("ReasoningEngine/DecisionEngine unavailable: %s", exc)
+            self.reasoning_engine = None
+            self.decision_engine = None
+
+        # Agent infrastructure
+        self.agent_registry = AgentRegistry()
+
+        # Agents (all receive memory_router, never raw stores)
+        self.agents: dict[str, Any] = {}
+        self._coordinator: CoordinatorAgent | None = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def inject_perception(
+        self,
+        ocr_pipeline=None,
+        screenshot_service=None,
+    ) -> None:
+        """FIX 7: Supply perception services after bootstrap Phase 4 completes."""
+        self._ocr_pipeline = ocr_pipeline
+        self._screenshot_svc = screenshot_service
+
+    async def start(self) -> None:
+        log.info("Orchestrator starting cognitive layer")
+
+        # Memory layer is already started by Bootstrap Phase 5.
+        # Orchestrator only injects runtime dependencies it did not have at construction time.
+        #
+        # Phase 3.5 note: this call is *idempotent* re-injection — it's not the
+        # only place memory_router gets wired. server.py's on_startup() now
+        # also re-injects event_bus + model_router into STATE.memory_router
+        # immediately after STATE.server_bus is created, unconditionally
+        # (not gated on JARVIS_ENABLE_ORCHESTRATOR). Before that server.py fix,
+        # this line here was the *only* path that ever corrected the
+        # event_bus=None/model_router=None the singleton was constructed
+        # with — so whenever the orchestrator was disabled (the default),
+        # MemoryRouter silently never vectorised anything for the rest of the
+        # process lifetime. Calling inject() again here with the same values
+        # server.py already set is harmless (last-write-wins, same values).
+        self.memory_router.inject(event_bus=self._bus, model_router=self._model)
+
+        # 2. GoalManager
+        self.goal_manager.inject(event_bus=self._bus)
+        await self.goal_manager.load_state()          # ← wire persistence
+
+        # P2-E: Cancel any ACTIVE goals orphaned from the prior session before
+        # starting agents, so they cannot re-trigger unexpectedly.
+        await self._cancel_orphaned_goals()
+
+        # P1-A/B: Inject ReasoningEngine + DecisionEngine
+        # Resolve EmbeddingService from DI container if available
+        self._embedding_service = None
+        try:
+            from boot.dependency_container import DependencyContainer
+            _container = DependencyContainer.get_instance()
+            self._embedding_service = _container.try_resolve("embedding_service")
+        except Exception:
+            pass
+        self.reasoning_engine.inject(
+            event_bus=self._bus,
+            model_router=self._model,
+            embedding_service=self._embedding_service,
+        )
+
+        # 3. PlanningEngine
+        self.planning_engine.inject(model_router=self._model, event_bus=self._bus)
+
+        # 4. Agents
+        await self._start_agents()
+
+        log.info(
+            "Orchestrator: cognitive layer online", agents=list(self.agents.keys())
+        )
+
+    async def stop(self) -> None:
+        log.info("Orchestrator: shutting down cognitive layer")
+        await self.goal_manager.save_state()          # ← persist goals before shutdown
+        for name, agent in reversed(list(self.agents.items())):
+            try:
+                await agent.stop()
+            except Exception as exc:
+                log.error("Agent stop error", agent=name, error=str(exc))
+        # NOTE: memory_router is NOT stopped here.
+        # Lifecycle ownership belongs to Bootstrap Phase 5; Bootstrap.stop() calls it.
+        log.info("Orchestrator: cognitive layer offline")
+
+    async def _start_agents(self) -> None:
+        # NOTE: Agent subclasses override BaseAgent.__init__ with explicit
+        # parameter lists. Only some accept every key in `common` (e.g.
+        # action_coordinator). Filter to the kwargs each constructor actually
+        # accepts so a missing param (on an agent that doesn't use it yet)
+        # doesn't crash the whole boot. Agents wired to accept action_coordinator
+        # still receive it.
+        def _compatible_kwargs(cls, **extra) -> dict:
+            try:
+                params = inspect.signature(cls.__init__).parameters
+            except (TypeError, ValueError):
+                return extra
+            if any(p.kind == inspect.Parameter.VAR_KEYWORD
+                   for p in params.values()):
+                return extra
+            return {k: v for k, v in extra.items() if k in params}
+
+        common = dict(
+            memory_router=self.memory_router,
+            event_bus=self._bus,
+            model_router=self._model,
+            registry=self.agent_registry,
+            tool_registry=self.tool_registry,  # FIX 5-C
+            embedding_service=self._embedding_service,  # shared singleton — same instance as ReasoningEngine
+            action_coordinator=self.action_coordinator,  # wiring pass
+        )
+
+        # P3-C: Only instantiate agents whose classes imported successfully
+        agent_instances: list[Any] = []
+        if ResearchAgent is not None:
+            agent_instances.append(ResearchAgent(**_compatible_kwargs(ResearchAgent, **common)))
+        if EngineeringAgent is not None:
+            agent_instances.append(EngineeringAgent(**_compatible_kwargs(EngineeringAgent, **common)))
+        if AnalysisAgent is not None:
+            agent_instances.append(AnalysisAgent(**_compatible_kwargs(AnalysisAgent, **common)))
+        if PlanningAgent is not None:
+            agent_instances.append(PlanningAgent(planning_engine=self.planning_engine,
+                                                 **_compatible_kwargs(PlanningAgent, **common)))
+        if CommunicationAgent is not None:
+            agent_instances.append(CommunicationAgent(**_compatible_kwargs(CommunicationAgent, **common)))
+        if AutomationAgent is not None:
+            agent_instances.append(AutomationAgent(**_compatible_kwargs(AutomationAgent, **common)))
+        if VisionAgent is not None:
+            agent_instances.append(VisionAgent(
+                **_compatible_kwargs(VisionAgent, **common),
+                ocr_pipeline=self._ocr_pipeline,        # FIX 7
+                screenshot_service=self._screenshot_svc, # FIX 7
+            ))
+        if AgroAgent is not None:
+            agent_instances.append(AgroAgent(**_compatible_kwargs(AgroAgent, **common)))
+
+        # Coordinator is last — depends on all agents being registered first.
+        # P1-A/B: inject reasoning_engine + decision_engine so the intent path
+        # runs through the full cognition pipeline before task planning.
+        coordinator = CoordinatorAgent(
+            memory_router=self.memory_router,
+            event_bus=self._bus,
+            goal_manager=self.goal_manager,
+            planning_engine=self.planning_engine,
+            agent_registry=self.agent_registry,
+            model_router=self._model,
+            tool_registry=self.tool_registry,  # FIX 5-C
+            reasoning_engine=self.reasoning_engine,  # P1-A
+            decision_engine=self.decision_engine,    # P1-B
+            action_coordinator=self.action_coordinator,  # wiring pass
+            proactive_engine=self.proactive_engine,       # wiring pass
+        )
+        agent_instances.append(coordinator)
+        self._coordinator = coordinator
+
+        for agent in agent_instances:
+            try:
+                await agent.start()
+                self.agents[agent.name] = agent
+            except Exception as exc:
+                log.error(
+                    "Agent start failed",
+                    agent=agent.name,
+                    error=str(exc),
+                    exc_info=True,
+                )
+
+    # ------------------------------------------------------------------
+    # P2-E: Orphan cleanup
+    # ------------------------------------------------------------------
+
+    async def _cancel_orphaned_goals(self) -> None:
+        """
+        P2-E fix: On startup, cancel any ACTIVE goals loaded from the previous
+        session. These orphans can never complete (their agents are gone) and
+        will re-trigger unexpectedly if left ACTIVE.
+        """
+        from cognition.planning.goal_manager import GoalStatus
+        active_goals = await self.goal_manager.by_status(GoalStatus.ACTIVE)
+        if active_goals:
+            log.warning(
+                "Cancelling %d orphaned ACTIVE goal(s) from prior session",
+                len(active_goals),
+            )
+        for goal in active_goals:
+            await self.goal_manager.cancel(
+                goal.goal_id,
+                reason="Orphaned from prior session — cancelled on restart",
+            )
+
+    # ------------------------------------------------------------------
+    # P2-D: Scheduler integration
+    # ------------------------------------------------------------------
+
+    def register_periodic_tasks(self, scheduler: Any) -> None:
+        """
+        P2-D fix: Register recurring maintenance tasks with the Scheduler.
+        Call this from bootstrap after both Orchestrator and Scheduler are started.
+
+        Tasks registered:
+          - goal_manager.overdue_sweep: auto-fail goals past their deadline (5 min)
+        """
+        try:
+            from kernel.scheduler.scheduler import PeriodicTaskSpec, TaskPriority
+            scheduler.add_periodic_task(PeriodicTaskSpec(
+                name="goal_manager.overdue_sweep",
+                interval_s=300,  # every 5 minutes
+                fn=self.goal_manager.sweep_overdue_goals,
+                priority=TaskPriority.LOW,
+            ))
+            log.info("Registered periodic task: goal_manager.overdue_sweep (300s)")
+        except Exception as exc:
+            log.warning("Could not register periodic tasks: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Control surface
+    # ------------------------------------------------------------------
+
+    async def submit_intent(
+        self, text: str, session_id: str = "", metadata: dict | None = None
+    ) -> None:
+        """
+        Primary entry point for user intents. Publishes on EventBus;
+        CoordinatorAgent handles the rest.
+        """
+        from kernel.event_bus.event_bus import Event
+
+        await self._bus.publish(
+            Event(
+                event_type="user.intent",
+                source="orchestrator",
+                payload={"text": text, "session_id": session_id, **(metadata or {})},
+            )
+        )
+
+    async def health(self) -> dict[str, Any]:
+        mem_stats = await self.memory_router.stats()
+        goal_stats = await self.goal_manager.stats()
+        agent_stats = await self.agent_registry.health_summary()
+        return {
+            "memory": mem_stats,
+            "goals": goal_stats,
+            "agents": agent_stats,
+        }

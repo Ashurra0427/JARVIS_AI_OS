@@ -1,0 +1,45 @@
+{
+  "connection": {
+    "auto_connect": true,
+    "reconnect_interval_s": 5,
+    "server_url": "ws://localhost:7788/ws"
+  },
+  "browser": {
+    "browser_type": "chromium",
+    "downloads_dir": "C:\\Users\\bisha\\Downloads",
+    "engine": "playwright",
+    "headless": false,
+    "search_engine": "https://duckduckgo.com/?q={query}",
+    "viewport_h": 900,
+    "viewport_w": 1280
+  },
+  "agents": {
+    "broadcast_enabled": true,
+    "default_agent": "oracle",
+    "route_via_coordinator": false
+  },
+  "models": {
+    "qwen_local_device": "AUTO",
+    "qwen_local_enabled": true,
+    "qwen_local_engine": "openvino"
+  },
+  "ollama": {
+    "active_model": "",
+    "fallback_model": "huihui_ai/qwen2.5-coder-abliterate:3b"
+  },
+  "voice": {
+    "stream_enabled": true,
+    "stt_enabled": true,
+    "tts_enabled": true,
+    "tts_speed": "+0%",
+    "tts_voice": "en-US-AndrewMultilingualNeural"
+  },
+  "appearance": {
+    "accent_color": "#00c8ff",
+    "font_size": 11
+  },
+  "files": {
+    "max_upload_mb": 50,
+    "workspace_dir": "C:\\Users\\bisha\\JARVIS_Workspace"
+  }
+}

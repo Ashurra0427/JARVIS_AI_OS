@@ -1,0 +1,117 @@
+# ============================================================
+# JARVIS AI OS — UI Configuration
+# ============================================================
+
+ui:
+  enabled: true
+  title: "JARVIS AI OS"
+  width: 1280
+  height: 800
+  remember_geometry: true
+  theme: dark
+  font_size: 13
+  system_tray: true
+  minimize_to_tray: true
+  opacity: 1.0
+
+
+# ============================================================
+# Speech — Voice Input (STT)
+# ============================================================
+
+stt:
+  # Primary STT engine: groq_whisper | faster_whisper
+  primary: groq_whisper
+
+  # Fallback if primary fails
+  fallback: faster_whisper
+
+  # Language code — leave empty for auto-detect (recommended for
+  # multilingual use, e.g. English/Hindi/Nepali). Forcing a code here
+  # (e.g. "en") tells Whisper to assume EVERY utterance is in that
+  # language, which actively breaks recognition of other languages
+  # rather than improving accuracy.
+  language: ""
+
+  # Audio sample rate (Hz) — must match MicrophoneEngine
+  sample_rate: 16000
+
+  # Max audio chunk per transcription request (seconds)
+  chunk_duration_s: 30
+
+  # Silence duration that triggers end-of-utterance (seconds)
+  # Must match WakeListenerConfig.post_silence_s (default 1.2)
+  silence_thresh_s: 1.2
+
+  # Faster-Whisper specific settings (used as fallback)
+  faster_whisper:
+    model_size: base       # tiny | base | small | medium | large
+    device: cpu
+    compute_type: int8
+
+
+# ============================================================
+# Speech — Voice Output (TTS)
+# ============================================================
+
+tts:
+  # Primary TTS engine: edge_tts | kokoro
+  primary: edge_tts
+
+  # Fallback if primary fails
+  fallback: kokoro
+
+  # Edge TTS voice name
+  # Full list: python -m edge_tts --list-voices
+  voice: en-US-GuyNeural
+
+  # Speech rate adjustment
+  rate: "+0%"
+
+  # Pitch adjustment
+  pitch: "+0Hz"
+
+  # Volume (not used by edge_tts directly — kept for future use)
+  volume: 1.0
+
+  # Max characters per TTS request (split longer text)
+  max_chars: 3000
+
+
+# ============================================================
+# Wake Word Detection
+# ============================================================
+
+wake_word:
+  # Always-on hotword listening (energy-based VAD, no model needed)
+  enabled: true
+
+  # Wake phrase — must be in HotwordConfig.keywords list
+  phrase: "hey jarvis"
+
+  # Stage-2 detection threshold (0.0–1.0).
+  # Maps to HotwordConfig.stage2_threshold in hotword.py.
+  # Lower = more sensitive (more false positives).
+  # Higher = stricter (may miss quiet speech).
+  sensitivity: 0.62
+
+  # Audio device index (-1 = system default)
+  device_index: -1
+
+
+# ============================================================
+# Notifications
+# ============================================================
+
+notifications:
+  # Show desktop notifications for completed goals
+  desktop_enabled: true
+
+  # Play a sound on important events
+  # NOTE: this controls desktop notification sounds only,
+  # NOT TTS voice output. TTS is always active independently.
+  sound_enabled: false
+
+  sound_file: ""
+  max_visible: 3
+  auto_dismiss_s: 8

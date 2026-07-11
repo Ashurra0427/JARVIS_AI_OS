@@ -1,0 +1,1747 @@
+// tmCore.js
+
+/*!
+ * TapMind_HB_v2.js — Combined HB Engine (GAM-free / Prebid-only)
+ * Modules: HBConfig · IHBRep · AdUnitBuilder · SchainManager · AuctionManager
+ * Load order: this file first, then template js (e.g. sldr_mod.js)
+ * Enable logs: add ?tmdebug=1 to your URL
+ *
+ * All values are dynamic — hardcoded defaults only where no override exists.
+ * Override any value via: window.tmHBOverrides = { key: value } BEFORE loading tmCore.
+ * Telemetry endpoints come from server response (jsonResponse.hb_endpoints).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * CHANGELOG — dual-Prebid-load fix (tmCore vs template-owned HB engines)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ROOT CAUSE: _loadWithPrebid() always preloaded Prebid from PREBID_URL
+ *   ('//dsrv.tmadsrv.com/auction/tmpbjs.js') for EVERY template, regardless
+ *   of whether that template actually uses window.tmAuctionManager. Templates
+ *   that own their own HB engine (e.g. sldr_mod's PlayerHeaderBidding, which
+ *   loads its own Prebid build from a DIFFERENT URL) would then inject a
+ *   SECOND, separate Prebid bundle. Both bundles raced to populate
+ *   window.tmpbjs — whichever finished last silently won, which stalled/
+ *   corrupted bidsBackHandler and delayed the ad from becoming visible.
+ *
+ * FIX: _loadWithPrebid() now checks jsonResponse.his.usesTmAuctionManager.
+ *   - true  → unchanged behaviour: tmCore preloads Prebid and owns
+ *             window.tmpbjs via window.tmAuctionManager, as before.
+ *   - false/undefined → tmCore does NOT touch Prebid at all. It hands off
+ *             straight to _loadCreativeJs() so the template (sldr_mod) is
+ *             the single, sole owner of loading + running its own Prebid
+ *             auction. No competing script tag, no race.
+ *
+ *   Server/response side: set his.usesTmAuctionManager = true only for
+ *   templates that actually call window.tmAuctionManager.run(). Leave it
+ *   false/omitted for sldr_mod-based units.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+(function (root) {
+    'use strict';
+
+    /* =====================================================================
+     * VERSION MARKER — check window.tmCoreVersion to confirm correct file loaded
+     * ===================================================================== */
+    root.tmCoreVersion = '2.1.0';
+    root.tmCoreLoaded  = true;
+
+    /* =====================================================================
+     * DEBUG FLAG — single source of truth for ALL tmCore logging.
+     * Enabled via ?tmdebug=1 in the URL, OR window.__tmdebug = true set
+     * manually before tmCore loads, OR _overrides.debug = true.
+     * Evaluated FIRST (before AUCTION/LOG/etc are built) so every logger
+     * in this file reads the same live flag — no stale captured values.
+     * ===================================================================== */
+    (function _installDebugFlag() {
+        if (root.__tmdebug === true) return; // already explicitly enabled before load
+        var fromUrl = false;
+        try { fromUrl = new URLSearchParams(root.location.search).get('tmdebug') === '1'; } catch (e) {}
+        var fromOverrides = !!(root.tmHBOverrides && root.tmHBOverrides.debug);
+        root.__tmdebug = fromUrl || fromOverrides;
+    })();
+
+    function _dbg() {
+        try { return root.__tmdebug === true; } catch(e) { return false; }
+    }
+
+    /* =====================================================================
+     * CSP NONCE HELPER
+     * Reads the nonce from an existing trusted script on the page and
+     * applies it to all dynamically injected <script> tags.
+     * This allows dynamic scripts to pass strict CSP policies that use nonces.
+     * Publisher must ensure their CSP includes the nonce for trusted sources.
+     * ===================================================================== */
+    function _getNonce() {
+        try {
+            // Look for nonce on existing scripts (set by server-side CSP)
+            var scripts = document.querySelectorAll('script[nonce]');
+            if (scripts.length > 0) return scripts[0].nonce || scripts[0].getAttribute('nonce') || '';
+            // Fallback: check meta tag for CSP nonce
+            var meta = document.querySelector('meta[name="csp-nonce"]');
+            if (meta) return meta.getAttribute('content') || '';
+        } catch(e) {}
+        return '';
+    }
+
+    function _injectScript(doc, src, onload, onerror) {
+        var s    = doc.createElement('script');
+        s.src    = src;
+        s.type   = 'text/javascript';
+        s.async  = true;
+        var nonce = _getNonce();
+        if (nonce) s.nonce = nonce;
+        if (onload)  s.onload  = onload;
+        if (onerror) s.onerror = onerror;
+        (doc.head || doc.body).appendChild(s);
+        return s;
+    }
+
+    // Expose _injectScript globally so sections outside this IIFE can use it
+    root._tmInjectScript = _injectScript;
+
+    /* =====================================================================
+     * SECTION 1 — HBConfig
+     * All values driven by _overrides (window.tmHBOverrides) with sensible
+     * defaults. No business values hardcoded.
+     * ===================================================================== */
+
+    var _overrides = (root.tmHBOverrides && typeof root.tmHBOverrides === 'object')
+        ? root.tmHBOverrides : {};
+
+    var AUCTION = {
+        namespace:             _overrides.namespace             || 'tmpbjs',  // single shared Prebid namespace for all templates
+        prebidUrl:             _overrides.prebidUrl             || '//dsrv.tmadsrv.com/auction/tmpbjs.js',
+        timeout:               _overrides.timeout               || 1500,
+        auctionRetries:        _overrides.auctionRetries        || 0,     // internal per-auction retries (same req data, short backoff)
+        auctionBackoff:        _overrides.auctionBackoff        || 200,   // ms between internal retries
+        prebidPollInterval:    _overrides.prebidPollInterval    || 10,    // ms between Prebid ready polls
+        maxPrebidPollAttempts: _overrides.maxPrebidPollAttempts || 20,    // max Prebid ready polls
+        debug:                 _overrides.debug || _dbg(),  // tied to __tmdebug — see _installDebugFlag above
+    };
+
+    var PRICE_BUCKETS = {
+        granularity: 'custom',
+        bands: _overrides.priceBands || [
+            { min: 0.10, max: 1.00,  increment: 0.10 },
+            { min: 1.00, max: 3.00,  increment: 0.25 },
+            { min: 3.00, max: 5.00,  increment: 0.50 },
+            { min: 5.00, max: 10.00, increment: 1.00 },
+        ],
+        minCpm: _overrides.minCpm || 0.10,
+        maxCpm: _overrides.maxCpm || 10.00,
+
+        prebidFormat: function () {
+            return {
+                buckets: PRICE_BUCKETS.bands.map(function (b) {
+                    return { min: b.min, max: b.max, increment: b.increment };
+                })
+            };
+        },
+
+        bucketCpm: function (cpm) {
+            if (!cpm || cpm < PRICE_BUCKETS.minCpm) return null;
+            var cappedCpm = Math.min(cpm, PRICE_BUCKETS.maxCpm);
+            var bands     = PRICE_BUCKETS.bands;
+            var bucketUsd = null;
+            for (var i = 0; i < bands.length; i++) {
+                var b = bands[i];
+                if (cappedCpm >= b.min && cappedCpm <= b.max) {
+                    bucketUsd = Math.floor(cappedCpm / b.increment) * b.increment;
+                    bucketUsd = Math.round(bucketUsd * 100) / 100;
+                    break;
+                }
+            }
+            if (bucketUsd === null && cappedCpm === PRICE_BUCKETS.maxCpm) {
+                bucketUsd = PRICE_BUCKETS.maxCpm;
+            }
+            if (bucketUsd === null) return null;
+            var cents = Math.round(bucketUsd * 100);
+            return cents.toString().padStart(4, '0');
+        },
+    };
+
+    var PREBID_CONFIG = {
+        debug:              false,
+        bidderTimeout:      AUCTION.timeout,
+        enableSendAllBids:  _overrides.enableSendAllBids  !== undefined ? _overrides.enableSendAllBids  : false,
+        useBidCache:        _overrides.useBidCache         !== undefined ? _overrides.useBidCache         : false,
+        deviceAccess:       _overrides.deviceAccess        !== undefined ? _overrides.deviceAccess        : true,
+        disableAjaxTimeout: _overrides.disableAjaxTimeout  !== undefined ? _overrides.disableAjaxTimeout  : false,
+        maxNestedIframes:   _overrides.maxNestedIframes    || 10,
+        maxBid:             _overrides.maxBid              || 5000,
+        enableTIDs:         _overrides.enableTIDs          !== undefined ? _overrides.enableTIDs          : true,
+        priceGranularity:   PRICE_BUCKETS.granularity,
+        customPriceBucket:  PRICE_BUCKETS.prebidFormat(),
+        currency: { adServerCurrency: _overrides.adServerCurrency || 'USD' },
+        userSync: {
+            syncEnabled:    _overrides.syncEnabled    !== undefined ? _overrides.syncEnabled    : true,
+            syncsPerBidder: _overrides.syncsPerBidder || 999,
+            syncDelay:      _overrides.syncDelay      || 3000,
+            auctionDelay:   _overrides.auctionDelay   || 0,
+            filterSettings: {
+                iframe: { bidders: '*', filter: 'include' },
+                image:  { bidders: '*', filter: 'include' },
+            },
+            userIds: _overrides.userIds || [
+                { name: 'novatiq', bidders: ['equativ','smartadserver'], params: { sourceid: 'Hcj' } },
+            ],
+        },
+        auctionOptions: {
+            rejectInvalidMediaTypes: _overrides.rejectInvalidMediaTypes !== undefined ? _overrides.rejectInvalidMediaTypes : false,
+            rejectUnknownMediaTypes: _overrides.rejectUnknownMediaTypes !== undefined ? _overrides.rejectUnknownMediaTypes : false,
+        },
+        storageControl:   { enforcement: _overrides.storageEnforcement || 'warn' },
+        floors:           {},
+        instreamTracking: { enabled: false },
+        s2sConfig: {
+            bidders:                 [],
+            adapter:                 'prebidServer',
+            allowUnknownBidderCodes: false,
+            syncTimeout:             _overrides.s2sSyncTimeout || 1000,
+            maxTimeout:              AUCTION.timeout,
+        },
+        realTimeData: { dataProviders: [] },
+    };
+
+    /* Telemetry endpoints — injected dynamically from server response.
+     * Set via tmHBConfig.setEndpoints(jsonResponse) called by the template
+     * after receiving the /req response. Defaults are fallback only. */
+    var TELEMETRY = {
+        ihbEndpoint:      _overrides.ihbEndpoint      || 'https://hb-rpt-akamai.tmadsrv.com/api/v1/events',
+        unfilledEndpoint: _overrides.unfilledEndpoint || 'https://hb-rpt.tmadsrv.com/api/v1/requestImpressionTrack',
+        xhrTimeout:       _overrides.xhrTimeout       || 3000,
+        events: { REQ: 'req', BID_WON: 'bidWon', IMP: 'imp', CLICK: 'click', UNFILLED: 'unfilled' },
+    };
+
+    var BIDDER_SETTINGS = {
+        standard: { storageAllowed: true, adserverTargeting: [] },
+    };
+
+    var BIDDER_FLAGS = {
+        requiresIpParam: _overrides.requiresIpParam || ['pixfuture'],
+        aliasMap:        _overrides.aliasMap        || { vaayaMedia: 'limelightDigital' },
+        schainWarnings:  _overrides.schainWarnings  || ['pixfuture'],
+    };
+
+    var LOG = {
+        // 'enabled' is read live via _dbg() on every call below — NOT a snapshot —
+        // so toggling window.__tmdebug at runtime (e.g. from console) takes effect
+        // immediately without needing a page reload, and ?tmdebug=1 always applies
+        // regardless of definition order relative to other tmCore sections.
+        get enabled() { return _dbg(); },
+        _ts: function () { return new Date().toISOString().slice(11, 23); },
+        info: function (mod, msg) {
+            if (!LOG.enabled) return;
+            console.log('%c[TM:HB:' + mod + '] [' + LOG._ts() + '] ' + msg, 'color:#4fc3f7;font-weight:600;font-size:11px');
+        },
+        ok: function (mod, msg) {
+            if (!LOG.enabled) return;
+            console.log('%c[TM:HB:' + mod + '] ✅ ' + msg, 'color:#66bb6a;font-weight:700;font-size:11px');
+        },
+        warn: function (mod, msg) {
+            if (!LOG.enabled) return;
+            console.warn('%c[TM:HB:' + mod + '] ⚠️  ' + msg, 'color:#ffb74d;font-weight:600;font-size:11px');
+        },
+        error: function (mod, msg) {
+            if (!LOG.enabled) return;
+            console.error('%c[TM:HB:' + mod + '] ❌ ' + msg, 'color:#ef5350;font-weight:700;font-size:12px');
+        },
+    };
+
+    var tmHBConfig = {
+        auction:        AUCTION,
+        priceBuckets:   PRICE_BUCKETS,
+        prebidConfig:   PREBID_CONFIG,
+        telemetry:      TELEMETRY,
+        bidderSettings: BIDDER_SETTINGS,
+        bidderFlags:    BIDDER_FLAGS,
+        log:            LOG,
+        namespace:      AUCTION.namespace,
+        timeout:        AUCTION.timeout,
+        debug:          AUCTION.debug,
+
+        getPrebid: function () {
+            return root[AUCTION.namespace] || null;
+        },
+
+        /**
+         * setEndpoints — called by template after /req response to inject
+         * server-side telemetry endpoints dynamically.
+         * jsonResponse may contain: hb_endpoints.ihb, hb_endpoints.unfilled
+         */
+        setEndpoints: function (jsonResponse) {
+            if (!jsonResponse) return;
+            var ep = jsonResponse.hb_endpoints;
+            if (ep && ep.ihb)      TELEMETRY.ihbEndpoint      = ep.ihb;
+            if (ep && ep.unfilled) TELEMETRY.unfilledEndpoint = ep.unfilled;
+            if (ep && ep.timeout)  TELEMETRY.xhrTimeout       = ep.timeout;
+            LOG.info('HBConfig', 'endpoints updated from response');
+        },
+
+        /**
+         * applyResponseConfig — called by template to push any per-response
+         * HB overrides (timeout, retries etc) from server into AUCTION config.
+         * jsonResponse.hb_config: { timeout, auctionRetries, auctionBackoff }
+         */
+        applyResponseConfig: function (jsonResponse) {
+            if (!jsonResponse || !jsonResponse.hb_config) return;
+            var hc = jsonResponse.hb_config;
+            if (hc.timeout)        { AUCTION.timeout = hc.timeout; PREBID_CONFIG.bidderTimeout = hc.timeout; }
+            if (hc.auctionRetries !== undefined) AUCTION.auctionRetries = hc.auctionRetries;
+            if (hc.auctionBackoff !== undefined) AUCTION.auctionBackoff = hc.auctionBackoff;
+            if (hc.prebidUrl)      AUCTION.prebidUrl = hc.prebidUrl;
+            LOG.info('HBConfig', 'response config applied');
+        },
+
+        buildPrebidConfig: function (hbData) {
+            var cfg = JSON.parse(JSON.stringify(PREBID_CONFIG));
+            var hasAdagio = Array.isArray(hbData) && hbData.some(function (h) { return h.bidder === 'adagio'; });
+            if (hasAdagio) {
+                var seen = {}, providers = [];
+                hbData.forEach(function (h) {
+                    if (h.bidder === 'adagio' && !seen[h.bidder]) {
+                        seen[h.bidder] = true;
+                        h.conditions.forEach(function (c) { providers.push({ name: 'adagio', params: c }); });
+                    }
+                });
+                cfg.realTimeData.dataProviders = providers;
+            }
+            return cfg;
+        },
+
+        validateHbData: function (hbData) {
+            if (!Array.isArray(hbData) || hbData.length === 0) {
+                LOG.error('HBConfig', 'header_bidding[] is empty or missing');
+                return false;
+            }
+            var valid = hbData.every(function (h) {
+                return h.bidder && Array.isArray(h.conditions) && h.conditions.length > 0
+                    && typeof h.floorPrice === 'number';
+            });
+            if (!valid) LOG.error('HBConfig', 'One or more header_bidding entries missing bidder/conditions/floorPrice');
+            return valid;
+        },
+    };
+
+    root.tmHBConfig = tmHBConfig;
+    LOG.info('HBConfig', 'v2 loaded — namespace="' + AUCTION.namespace + '" timeout=' + AUCTION.timeout + 'ms');
+
+    /* =====================================================================
+     * SECTION 2 — IHBRep  (unchanged — telemetry endpoints now dynamic)
+     * ===================================================================== */
+
+    var STRIP_KEYS = new Set([
+        'user_consent','keywords','commit','language','his','interest',
+        'latlon','contextual_targeting','brand','ip','demand','zipcode',
+        'header_bidding','creative_content','header_bidding_schain',
+        'bot','description','title','category',
+    ]);
+
+    var BID_KEEP_KEYS = new Set([
+        'pid','tid','buyer_name','buyer_id','size','adId','bidder',
+        'cpm','originalCpm','floorData','responseTimestamp',
+        'requestTimestamp','bidderAdjustment','adUnitCode','timeToRespond',
+    ]);
+
+    function IHBRep(config) {
+        if (!config || !config.telemetry) throw new Error('[IHBRep] HBConfig must be passed to constructor');
+        this._config     = config;   // keep ref so endpoint changes propagate
+        this._events     = config.telemetry.events;
+        this._log        = config.log;
+        this._sentMap    = {};
+        this._log.info('IHBRep', 'initialised');
+    }
+
+    /* Always read endpoint from config at call-time so setEndpoints() propagates */
+    IHBRep.prototype._endpoint    = function () { return this._config.telemetry.ihbEndpoint; };
+    IHBRep.prototype._unfilledEp  = function () { return this._config.telemetry.unfilledEndpoint; };
+    IHBRep.prototype._xhrTimeout  = function () { return this._config.telemetry.xhrTimeout; };
+
+    IHBRep.prototype.req = function (adUnitData, adUnits) {
+        this._send(this._endpoint(), {
+            eventType: this._events.REQ,
+            eventData: Object.assign({}, this._sanitizeAdData(adUnitData), { hbDup: this._sanitizeHbDup(adUnits) }),
+        }, 'req');
+    };
+
+    IHBRep.prototype.bidWon = function (bid, enrichment) {
+        var safeBid = this._sanitizeBid(bid);
+        var key     = this._events.BID_WON + (safeBid.adUnitCode || safeBid.adId || '');
+        if (this._isDuplicate(key)) { this._log.warn('IHBRep', 'bidWon duplicate suppressed'); return; }
+        this._markSent(key);
+        this._send(this._endpoint(), {
+            eventType: this._events.BID_WON,
+            eventData: Object.assign({}, safeBid, enrichment || {}),
+        }, 'bidWon');
+    };
+
+    IHBRep.prototype.imp = function (allBids, winnerBid, enrichment) {
+        var safeWinner = winnerBid ? this._sanitizeBid(winnerBid) : null;
+        var safeAll    = Array.isArray(allBids) ? allBids.map(this._sanitizeBid.bind(this)) : (safeWinner ? [safeWinner] : []);
+        this._send(this._endpoint(), {
+            eventType: this._events.IMP,
+            eventData: Object.assign({}, { listOfWinningBids: safeAll, winningBids: safeWinner }, enrichment || {}),
+        }, 'imp');
+    };
+
+    IHBRep.prototype.click = function (adId, pid, tid) {
+        if (!adId) { this._log.warn('IHBRep', 'click() called with no adId'); return; }
+        this._send(this._endpoint(), { eventType: this._events.CLICK, eventData: { adId: adId, pid: pid, tid: tid } }, 'click');
+    };
+
+    IHBRep.prototype.unfilled = function (adUnitId, device, country, attempt) {
+        var data = { eventType: this._events.UNFILLED, adUnitId: adUnitId };
+        if (device  !== undefined) data.device  = device;
+        if (country !== undefined) data.country = country;
+        if (attempt !== undefined) data.attempt = attempt;
+        var xhr = this._makeXhr();
+        if (!xhr) return;
+        try {
+            xhr.open('POST', this._unfilledEp());
+            xhr.setRequestHeader('Accept', 'application/json');
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.timeout = this._xhrTimeout();
+            xhr.send(JSON.stringify(data));
+            this._log.info('IHBRep', 'unfilled fired — adUnitId=' + adUnitId);
+        } catch (e) { this._log.warn('IHBRep', 'unfilled XHR failed: ' + e.message); }
+    };
+
+    IHBRep.prototype._send = function (url, payload, label) {
+        var self = this, body;
+        try { body = JSON.stringify(payload); } catch (e) { self._log.warn('IHBRep', 'stringify failed for ' + label); return; }
+
+        if (label === 'click' && navigator.sendBeacon) {
+            try {
+                navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+                self._log.info('IHBRep', 'beacon(' + label + ') queued');
+                return;
+            } catch (e) { /* fall through */ }
+        }
+
+        var xhr = this._makeXhr();
+        if (!xhr) return;
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+            xhr.status >= 200 && xhr.status < 300
+                ? self._log.ok('IHBRep', label + ' → ' + xhr.status)
+                : self._log.warn('IHBRep', label + ' → HTTP ' + xhr.status);
+        };
+        xhr.ontimeout = function () { self._log.warn('IHBRep', label + ' timed out'); };
+        xhr.onerror   = function () { self._log.warn('IHBRep', label + ' network error'); };
+        try {
+            xhr.open('POST', url);
+            xhr.setRequestHeader('Accept', 'application/json');
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.timeout = self._xhrTimeout();
+            xhr.send(body);
+            self._log.info('IHBRep', label + ' fired');
+        } catch (e) { self._log.warn('IHBRep', '_send failed for ' + label + ': ' + e.message); }
+    };
+
+    IHBRep.prototype._makeXhr = function () {
+        try { return new XMLHttpRequest(); } catch (e) { this._log.error('IHBRep', 'XHR unavailable'); return null; }
+    };
+
+    IHBRep.prototype._sanitizeAdData = function (d) {
+        if (!d || typeof d !== 'object') return {};
+        var out = {}, keys = Object.keys(d);
+        for (var i = 0; i < keys.length; i++) { if (!STRIP_KEYS.has(keys[i])) out[keys[i]] = d[keys[i]]; }
+        return out;
+    };
+
+    IHBRep.prototype._sanitizeHbDup = function (units) {
+        if (!Array.isArray(units)) return [];
+        return units.map(function (unit) {
+            var out = {}, skip = new Set(['ortb2Imp','ortb2','element']), keys = Object.keys(unit);
+            for (var i = 0; i < keys.length; i++) { if (!skip.has(keys[i])) out[keys[i]] = unit[keys[i]]; }
+            if (Array.isArray(out.bids)) {
+                out.bids = out.bids.map(function (b) {
+                    var bOut = {}, bSkip = new Set(['schain','params','uniqueTrackingId']), bKeys = Object.keys(b);
+                    for (var j = 0; j < bKeys.length; j++) { if (!bSkip.has(bKeys[j])) bOut[bKeys[j]] = b[bKeys[j]]; }
+                    return bOut;
+                });
+            }
+            return out;
+        });
+    };
+
+    IHBRep.prototype._sanitizeBid = function (b) {
+        if (!b || typeof b !== 'object') return b;
+        var out = {}, keys = Object.keys(b);
+        for (var i = 0; i < keys.length; i++) { if (BID_KEEP_KEYS.has(keys[i])) out[keys[i]] = b[keys[i]]; }
+        if (out.floorData && typeof out.floorData === 'object') out.floorData = { floorValue: out.floorData.floorValue };
+        // Prebid uses width+height not size[] — reconstruct size array for reporting
+        if (!out.size && b.width && b.height) { out.size = [b.width, b.height]; }
+        return out;
+    };
+
+    IHBRep.prototype._isDuplicate = function (key) {
+        var entry = this._sentMap[key];
+        return entry && (Date.now() - entry) < 500;
+    };
+
+    IHBRep.prototype._markSent = function (key) {
+        this._sentMap[key] = Date.now();
+        var keys = Object.keys(this._sentMap), now = Date.now(), self = this;
+        if (keys.length > 50) keys.forEach(function (k) { if (now - self._sentMap[k] > 5000) delete self._sentMap[k]; });
+    };
+
+    (function mountIHBRep() {
+        var instance = new IHBRep(tmHBConfig);
+
+        root.tmsrv = root.tmsrv || {};
+
+        /**
+         * shimFn — backward-compat for OLD-style templates that call:
+         *   utils.IHBRep('req',    cleanPayload,            cb)
+         *   utils.IHBRep('imp',    { listOfWinningBids, winningBids }, cb)
+         *   utils.IHBRep('bidWon', bidObject,               cb)
+         *   utils.IHBRep('click',  { adId, pid, tid },       cb)
+         *
+         * Adapts the old single-object-argument call style to the new
+         * positional-argument method signatures, so templates with HB
+         * running client-side (pre-tmAuctionManager) keep working unchanged.
+         *
+         * NOTE: this stays mounted at window.tmsrv.IHBRep regardless of
+         * usesTmAuctionManager — sldr_mod's PlayerHeaderBidding calls
+         * this.utils.IHBRep(...) directly for its own telemetry, and that
+         * must keep working even though tmCore no longer preloads Prebid
+         * for it. Telemetry reporting and Prebid loading are independent.
+         */
+        var shimFn = function (eventType, data, cb) {
+            LOG.warn('IHBRep', 'Deprecated call: tmsrv.IHBRep("' + eventType + '") — use named method');
+            try {
+                switch (eventType) {
+                    case 'req':
+                        // old: IHBRep('req', cleanPayload, cb) — cleanPayload already includes hbDup
+                        // req(adUnitData, adUnits) — pass cleanPayload as adUnitData, adUnits unused
+                        // since hbDup is already embedded in cleanPayload by old template's _sanitizeAdData
+                        instance.req(data, []);
+                        break;
+                    case 'imp':
+                        // old: IHBRep('imp', { listOfWinningBids, winningBids }, cb)
+                        // imp(allBids, winnerBid, enrichment) — unpack the old report shape
+                        var allBids   = (data && data.listOfWinningBids) || [];
+                        var winnerBid = (data && data.winningBids) || null;
+                        instance.imp(allBids, winnerBid, {});
+                        break;
+                    case 'bidWon':
+                        // old: IHBRep('bidWon', bidObject, cb) — bidObject already has
+                        // pid/tid/country/etc merged in via Object.assign(b, meta, enrichment)
+                        // before this call, so pass {} as enrichment (already merged into bid)
+                        instance.bidWon(data, {});
+                        break;
+                    case 'click':
+                        // old: IHBRep('click', { adId, pid, tid }, cb)
+                        // click(adId, pid, tid) — unpack object to positional args
+                        if (data && typeof data === 'object') {
+                            instance.click(data.adId, data.pid, data.tid);
+                        }
+                        break;
+                    case 'unfilled':
+                        // old templates rarely call this directly, but support it anyway
+                        if (data && typeof data === 'object') {
+                            instance.unfilled(data.adUnitId, data.device, data.country, data.attempt);
+                        }
+                        break;
+                    default:
+                        if (typeof instance[eventType] === 'function') instance[eventType](data);
+                }
+            } catch (e) {
+                LOG.error('IHBRep', 'shimFn(' + eventType + ') failed: ' + e.message);
+            }
+            if (typeof cb === 'function') cb();
+        };
+        shimFn.req      = instance.req.bind(instance);
+        shimFn.bidWon   = instance.bidWon.bind(instance);
+        shimFn.imp      = instance.imp.bind(instance);
+        shimFn.click    = instance.click.bind(instance);
+        shimFn.unfilled = instance.unfilled.bind(instance);
+
+        root.tmsrv.IHBRep = shimFn;
+        root.IHBRep        = IHBRep;
+        LOG.ok('IHBRep', 'mounted at window.tmsrv.IHBRep');
+    })();
+
+    /* =====================================================================
+     * SECTION 3 — AdUnitBuilder  (unchanged — only used when
+     * usesTmAuctionManager templates call window.tmAuctionManager.run())
+     * ===================================================================== */
+
+    function _uid(id, sfx) {
+        var base = id + '_' + Math.random().toString(36).slice(2) + '_' + Date.now();
+        return sfx ? base + '_' + sfx : base;
+    }
+    function _rid() { return Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8); }
+    function _mkSchain(nodes) {
+        if (!Array.isArray(nodes) || !nodes.length) return null;
+        return { ver: '1.0', complete: 1, nodes: nodes.map(function (n) { return Object.assign({}, n, { rid: _rid() }); }) };
+    }
+    function _mkFloor(price) { return { currency: 'USD', schema: { fields: ['mediaType'] }, values: { banner: price } }; }
+    function _safeFloor(raw, fallback) { var n = Number(raw); return (isNaN(n) || n < 0) ? (fallback || 0.01) : Number(n.toFixed(2)); }
+    var MAX_BUYER_REQUESTS = 5;
+    function _buyerRequestCount(raw) { var n = Number(raw); return (isNaN(n) || n < 1) ? 1 : Math.min(Math.floor(n), MAX_BUYER_REQUESTS); }
+
+    var AdUnitBuilder = {};
+
+    AdUnitBuilder.build = function (hbData, adUnitCode, adUnitData, containerEl, l2Bidders, config) {
+        var units      = [];
+        var log        = (config && config.log) ? config.log : { info:function(){}, warn:function(){}, error:function(){} };
+        var flags      = (config && config.bidderFlags) ? config.bidderFlags : { requiresIpParam:[], aliasMap:{}, schainWarnings:[] };
+        var mainIp     = (adUnitData && adUnitData.ip) ? adUnitData.ip : null;
+        var adUnitId   = (adUnitData && adUnitData.AdUnitID) ? adUnitData.AdUnitID : null;
+        var l2Set      = (l2Bidders instanceof Set) ? l2Bidders : new Set();
+        var primaryCnt = 0, secondaryCnt = 0, skippedCnt = 0;
+
+        if (!Array.isArray(hbData) || !hbData.length) { log.error('AdUnitBuilder','hbData is empty'); return units; }
+        if (!adUnitCode || typeof adUnitCode !== 'string') { log.error('AdUnitBuilder','adUnitCode required'); return units; }
+
+        hbData.forEach(function (hb) {
+            if (!hb.bidder || !Array.isArray(hb.conditions) || !hb.conditions.length) { skippedCnt++; return; }
+            if (typeof hb.floorPrice !== 'number') { log.warn('AdUnitBuilder','Skipping "'+hb.bidder+'" — floorPrice not a number'); skippedCnt++; return; }
+
+            var fp             = _safeFloor(hb.floorPrice);
+            var sp             = hb.isSecondaryFloorPriceEnabled ? _safeFloor(hb.secondaryFloorPrice, fp) : null;
+            var sizes          = Array.isArray(hb.size) ? hb.size : [[300,250]];
+            var cnt            = _buyerRequestCount(hb.buyerRequests);
+            var mt             = { banner: { sizes: sizes } };
+            var resolvedBidder = (flags.aliasMap && flags.aliasMap[hb.bidder]) ? flags.aliasMap[hb.bidder] : hb.bidder;
+            var pixExtra       = {};
+            if (Array.isArray(flags.requiresIpParam) && flags.requiresIpParam.indexOf(resolvedBidder) !== -1 && mainIp) {
+                pixExtra = { ip: mainIp };
+            }
+            var schainObj    = l2Set.has(resolvedBidder) ? _mkSchain(hb.schain) : null;
+            var secSchainObj = l2Set.has(resolvedBidder) ? _mkSchain(hb.schain) : null;
+
+            // [PORTED from ref_mod.js RefHeaderBidding.buildAdUnits — FIX-1 UNIVERSAL divId]
+            // Stable publisher placement ID for adapters (e.g. adagio) that read
+            // ortb2Imp.ext.data.divId instead of falling back to adUnit.code, which
+            // is a dynamic internal string (e.g. "tmsrv_Imp_123"), not a real div ID.
+            var divId = adUnitId != null ? ('tmsrv-' + adUnitId) : null;
+
+            hb.conditions.forEach(function (cond) {
+                for (var r = 0; r < cnt; r++) {
+                    var tID  = _uid(hb.buyer_id);
+                    var unit = {
+                        code: adUnitCode, mediaTypes: mt, floors: _mkFloor(fp),
+                        bids: [{ bidder: resolvedBidder, bidderName: hb.buyer_name, bidderID: hb.buyer_id,
+                                 mediaType: 'banner', params: Object.assign({}, cond, pixExtra), uniqueTrackingId: tID }],
+                        ortb2Imp: { ext: { data: {
+                            buyer_name: hb.buyer_name, buyer_id: hb.buyer_id, adUnitId: adUnitId,
+                            operational_domain: hb.operational_domain || null,
+                            bidderAdjustment: hb.bidder_adjustment,
+                            customTrackingId: tID, floorPrice: fp,
+                            divId: divId,
+                        }}},
+                    };
+                    if (containerEl) unit.element = containerEl;
+                    if (schainObj)   unit.ortb2   = { source: { ext: { schain: schainObj } } };
+                    units.push(unit);
+                    primaryCnt++;
+                }
+                if (sp !== null) {
+                    var sTID    = _uid(hb.buyer_id, 'sec');
+                    var secUnit = {
+                        code: adUnitCode, mediaTypes: mt, floors: _mkFloor(sp),
+                        bids: [{ bidder: resolvedBidder, bidderName: hb.buyer_name, bidderID: hb.buyer_id,
+                                 mediaType: 'banner', params: Object.assign({}, cond, pixExtra), uniqueTrackingId: sTID }],
+                        ortb2Imp: { ext: { data: {
+                            buyer_name: hb.buyer_name, buyer_id: hb.buyer_id, adUnitId: adUnitId,
+                            operational_domain: hb.operational_domain || null,
+                            bidderAdjustment: hb.bidder_adjustment,
+                            customTrackingId: sTID, floorPrice: sp, isSecondary: true,
+                            divId: divId,
+                        }}},
+                    };
+                    if (containerEl) secUnit.element = containerEl;
+                    if (secSchainObj) secUnit.ortb2  = { source: { ext: { schain: secSchainObj } } };
+                    units.push(secUnit);
+                    secondaryCnt++;
+                }
+            });
+        });
+        log.info('AdUnitBuilder', primaryCnt+' primary, '+secondaryCnt+' secondary, '+skippedCnt+' skipped = '+units.length+' total');
+        return units;
+    };
+
+    AdUnitBuilder.buildRtProviders = function (hbData) {
+        if (!Array.isArray(hbData)) return [];
+        var seen = new Set(), providers = [];
+        hbData.filter(function (h) { return h.bidder === 'adagio'; }).forEach(function (h) {
+            if (!seen.has(h.bidder)) { seen.add(h.bidder); h.conditions.forEach(function (c) { providers.push({ name: h.bidder, params: c }); }); }
+        });
+        return providers;
+    };
+
+    AdUnitBuilder.validate = function (units, config) {
+        var log    = (config && config.log) ? config.log : { warn:function(){}, error:function(){} };
+        var errors = [], warnings = [];
+        if (!Array.isArray(units) || units.length === 0) { errors.push('adUnits array is empty'); return { valid: false, errors: errors, warnings: warnings }; }
+        units.forEach(function (u, i) {
+            var p = 'unit[' + i + ']';
+            if (!u.code) errors.push(p + ': missing code');
+            if (!u.mediaTypes || !u.mediaTypes.banner || !Array.isArray(u.mediaTypes.banner.sizes)) errors.push(p + ': invalid mediaTypes');
+            if (!Array.isArray(u.bids) || !u.bids.length) { errors.push(p + ': bids empty'); }
+            else { u.bids.forEach(function (b, j) { if (!b.bidder) errors.push(p+'.bids['+j+']: missing bidder'); }); }
+            if (!u.ortb2Imp || !u.ortb2Imp.ext || !u.ortb2Imp.ext.data) errors.push(p + ': missing ortb2Imp.ext.data');
+        });
+        var valid = errors.length === 0;
+        if (!valid) errors.forEach(function (e) { log.error('AdUnitBuilder:validate', e); });
+        return { valid: valid, errors: errors, warnings: warnings };
+    };
+
+    AdUnitBuilder.summarise = function (units) {
+        if (!Array.isArray(units)) return '(no units)';
+        var primary = units.filter(function (u) { return !u.ortb2Imp.ext.data.isSecondary; });
+        var secondary = units.filter(function (u) { return !!u.ortb2Imp.ext.data.isSecondary; });
+        var bidders = {};
+        units.forEach(function (u) { var b = u.bids[0].bidder; bidders[b] = (bidders[b]||0)+1; });
+        return primary.length+' primary + '+secondary.length+' secondary = '+units.length+' total | ['
+            + Object.keys(bidders).map(function(k){return k+'×'+bidders[k];}).join(', ') + ']';
+    };
+
+    root.AdUnitBuilder = AdUnitBuilder;
+    LOG.ok('AdUnitBuilder', 'loaded');
+
+    /* =====================================================================
+     * SECTION 4 — SchainManager  (unchanged)
+     * ===================================================================== */
+
+    function _schainRid() { return Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8); }
+    function _schainSig(nodes) {
+        if (!Array.isArray(nodes) || !nodes.length) return '';
+        return JSON.stringify(nodes.slice().sort(function (a,b) { return a.asi.localeCompare(b.asi); }));
+    }
+    function _buildSchainObj(nodes) {
+        return { ver:'1.0', complete:1, nodes: nodes.map(function(n){ return Object.assign({}, n, { rid: _schainRid() }); }) };
+    }
+
+    var SchainManager = {};
+
+    SchainManager.apply = function (tmpbjs, hbData, hbSchainData, config) {
+        var log       = (config && config.log) ? config.log : { info:function(){}, warn:function(){}, error:function(){}, ok:function(){} };
+        var flags     = (config && config.bidderFlags) ? config.bidderFlags : { aliasMap:{}, schainWarnings:[] };
+        var l2Bidders = new Set();
+        if (!tmpbjs || typeof tmpbjs.setBidderConfig !== 'function') { log.error('SchainManager', 'setBidderConfig not available'); return l2Bidders; }
+        var map = _buildSchainMap(hbData, hbSchainData, flags, log);
+        if (map.size === 0) { log.warn('SchainManager','No schain data found'); return l2Bidders; }
+        var l1Count = 0, l2Count = 0;
+        map.forEach(function (entry, bidder) {
+            var rb = (flags.aliasMap && flags.aliasMap[bidder]) ? flags.aliasMap[bidder] : bidder;
+            _validatePixSchain(bidder, entry.nodes, flags, log);
+            if (entry.sigs.size > 1) { l2Bidders.add(rb); l2Count++; return; }
+            try {
+                tmpbjs.setBidderConfig({ bidders:[rb], config:{ ortb2:{ source:{ ext:{ schain: _buildSchainObj(entry.nodes) }}}}});
+                l1Count++;
+            } catch (e) { log.error('SchainManager','setBidderConfig failed for "'+rb+'": '+e.message); l2Bidders.add(rb); }
+        });
+        log.info('SchainManager','apply() — L1: '+l1Count+', L2: '+l2Count);
+        return l2Bidders;
+    };
+
+    function _buildSchainMap(hbData, hbSchainData, flags, log) {
+        var map = new Map();
+        var src = (Array.isArray(hbSchainData) && hbSchainData.length > 0) ? hbSchainData : (Array.isArray(hbData) ? hbData : []);
+        src.forEach(function (entry) {
+            if (!entry.bidder) return;
+            var nodes = entry.schain || (function(){ var h = (hbData||[]).find(function(x){return x.bidder===entry.bidder;}); return h && h.schain; })() || [];
+            if (!Array.isArray(nodes) || !nodes.length) return;
+            var sig = _schainSig(nodes);
+            if (!map.has(entry.bidder)) {
+                map.set(entry.bidder, { nodes: nodes, sigs: new Set([sig]), domains: new Set([entry.operational_domain||'']) });
+            } else {
+                var ex = map.get(entry.bidder); ex.sigs.add(sig);
+                if (entry.operational_domain) ex.domains.add(entry.operational_domain);
+            }
+        });
+        return map;
+    }
+
+    function _validatePixSchain(bidder, nodes, flags, log) {
+        if (!Array.isArray(flags.schainWarnings) || flags.schainWarnings.indexOf(bidder) === -1) return;
+        if (!Array.isArray(nodes) || !nodes.length) return;
+        var hasPixNode = nodes.some(function(n){ return n.asi && n.asi.toLowerCase().indexOf('pixfuture') !== -1; });
+        if (!hasPixNode && nodes.length === 1) log.warn('SchainManager','pixfuture schain has only 1 node');
+    }
+
+    root.SchainManager = SchainManager;
+    LOG.ok('SchainManager', 'loaded');
+
+    /* =====================================================================
+     * SECTION 5 — AuctionManager  (only exercised by templates that set
+     * his.usesTmAuctionManager = true and call window.tmAuctionManager.run()
+     * themselves — sldr_mod's own PlayerHeaderBidding never calls this)
+     * ===================================================================== */
+
+    function AuctionManager(config, adUnitBuilder, schainManager, ihbRep) {
+        if (!config) throw new Error('[AuctionManager] config is required');
+        this._cfg               = config;
+        this._auc               = config.auction;
+        this._log               = config.log;
+        this._ab                = adUnitBuilder || root.AdUnitBuilder;
+        this._sm                = schainManager || root.SchainManager;
+        this._ihb               = ihbRep;
+        this._refreshTimers     = {};
+        this._vaayaAliasCreated = false;
+        this._eventsWired       = false;   // wire onEvent listeners only once
+        this._lastL2Bidders     = new Set();
+        this._log.info('AuctionManager', 'initialised');
+    }
+
+    AuctionManager.prototype._getIhb = function () {
+        if (this._ihb) return this._ihb;
+        if (root.tmsrv && root.tmsrv.IHBRep) { this._ihb = root.tmsrv.IHBRep; }
+        return this._ihb || null;
+    };
+
+    /**
+     * run(adUnitCode, adUnitData, containerEl, onComplete, timeoutOverride)
+     * timeoutOverride — per-call auction timeout (e.g. his.hbAuctionTimeout from sldr_mod)
+     * Takes precedence over AUCTION.timeout for this call only.
+     */
+    AuctionManager.prototype.run = function (adUnitCode, adUnitData, containerEl, onComplete, timeoutOverride) {
+        var self = this, log = this._log;
+        var cb   = typeof onComplete === 'function' ? onComplete : function () {};
+
+        // Apply any per-response config from server (endpoints, timeouts)
+        if (adUnitData) {
+            this._cfg.setEndpoints(adUnitData);
+            this._cfg.applyResponseConfig(adUnitData);
+        }
+
+        // Reset event wiring flag for this new waterfall round.
+        // Events will be wired fresh with new enrichment (new tid from rreq).
+        this._eventsWired   = false;
+        this._lastL2Bidders = new Set();
+
+        var hbData = adUnitData && adUnitData.header_bidding;
+        if (!this._cfg.validateHbData(hbData)) { log.error('AuctionManager','header_bidding[] invalid'); cb(null); return; }
+
+        var effectiveTimeout = timeoutOverride || this._auc.timeout;
+        log.info('AuctionManager','run: adUnit="'+adUnitCode+'" timeout='+effectiveTimeout+'ms bidders=['+hbData.map(function(h){return h.bidder;}).join(', ')+']');
+
+        // IHBRep.req fires ONCE per waterfall round (before auction, not per internal retry)
+        var ihb = this._getIhb();
+        if (ihb && ihb.req) {
+            // adUnits not built yet — send adUnitData only; hbDup added after build
+            ihb.req(adUnitData, []);
+        }
+
+        this._ensureScript(root.document || document, function () {
+            self._pollPrebidReady(function (tmpbjs) {
+                if (!tmpbjs) { log.error('AuctionManager','Prebid not ready'); cb(null); return; }
+                self._runAuction(tmpbjs, adUnitCode, adUnitData, containerEl, hbData, 1, cb, effectiveTimeout);
+            });
+        });
+    };
+
+    AuctionManager.prototype.destroy = function (adUnitCode) {
+        if (this._refreshTimers[adUnitCode]) { clearTimeout(this._refreshTimers[adUnitCode]); delete this._refreshTimers[adUnitCode]; }
+    };
+
+    AuctionManager.prototype._runAuction = function (tmpbjs, adUnitCode, adUnitData, containerEl, hbData, attempt, cb, timeoutOverride) {
+        var self = this, log = this._log;
+        var effectiveTimeout = timeoutOverride || this._auc.timeout;
+        log.info('AuctionManager','_runAuction: attempt='+attempt+' timeout='+effectiveTimeout+'ms');
+
+        // setConfig and SchainManager only on first attempt — retries reuse same config.
+        // Re-running setConfig on retry resets RTD providers and may break adagio/other RTD modules.
+        // Build bidderSettings dynamically from hbData bidder_adjustment values.
+        // This is the ONLY way Prebid applies CPM adjustments when ranking bids.
+        // Without this, bids compare at raw CPM ignoring buyer net/gross adjustment.
+        try {
+            var flags       = this._cfg.bidderFlags;
+            var bSettings   = { standard: { storageAllowed: true, adserverTargeting: [] } };
+            hbData.forEach(function (hb) {
+                var bidder = (flags.aliasMap && flags.aliasMap[hb.bidder]) ? flags.aliasMap[hb.bidder] : hb.bidder;
+                var adj = Number(hb.bidder_adjustment);
+                // bidder_adjustment is a PERCENTAGE value e.g. 80 means 80%
+                // multiplier = adj / 100  →  80% = 0.80
+                // bidder_adjustment=0 or missing or 100 → no adjustment (use raw CPM)
+                // Never divide by zero or apply 0% — would zero all bids
+                var multiplier = ((!isNaN(adj) && adj > 0 && adj !== 100))
+                    ? (adj / 100)
+                    : 1.0;
+                if (multiplier !== 1.0) {
+                    bSettings[bidder] = {
+                        storageAllowed: true,
+                        bidCpmAdjustment: (function (m) {
+                            return function (bidCpm) { return bidCpm * m; };
+                        })(multiplier),
+                    };
+                }
+            });
+            tmpbjs.bidderSettings = bSettings;
+        } catch(e) { log.warn('AuctionManager','bidderSettings failed: '+e.message); }
+
+        if (attempt === 1) {
+            var hasVaaya = hbData.some(function(h){ return h.bidder === 'vaayaMedia'; });
+            if (hasVaaya && !this._vaayaAliasCreated) {
+                try {
+                    if (!tmpbjs.bidderRegistry || !tmpbjs.bidderRegistry.vaayaMedia) {
+                        tmpbjs.aliasBidder('limelightDigital','vaayaMedia');
+                        this._vaayaAliasCreated = true;
+                    }
+                } catch(e) { log.error('AuctionManager','aliasBidder failed: '+e.message); }
+            }
+        }
+
+        // setConfig + schain only on first attempt
+        if (attempt === 1) {
+            try { tmpbjs.setConfig(this._cfg.buildPrebidConfig(hbData)); } catch(e) { log.error('AuctionManager','setConfig threw: '+e.message); }
+        }
+        var hbSchainData = adUnitData.header_bidding_schain || [];
+        var l2Bidders    = (attempt === 1 && this._sm)
+            ? this._sm.apply(tmpbjs, hbData, hbSchainData, this._cfg)
+            : (this._lastL2Bidders || new Set());
+        if (attempt === 1) this._lastL2Bidders = l2Bidders;
+
+        var adUnits;
+        try { adUnits = this._ab.build(hbData, adUnitCode, adUnitData, containerEl, l2Bidders, this._cfg); }
+        catch (e) { log.error('AuctionManager','build threw: '+e.message); cb(null); return; }
+
+        var validation = this._ab.validate(adUnits, this._cfg);
+        if (!validation.valid) { log.error('AuctionManager','validation failed: '+validation.errors.join('; ')); cb(null); return; }
+        log.info('AuctionManager', this._ab.summarise(adUnits));
+
+        try { if (tmpbjs.adUnits) tmpbjs.adUnits.length = 0; tmpbjs.addAdUnits(adUnits); }
+        catch (e) { log.error('AuctionManager','addAdUnits threw: '+e.message); cb(null); return; }
+
+        // Wire Prebid events only once — onEvent() listeners accumulate (no offEvent).
+        // Firing wireEvents on every attempt causes duplicate IHBRep.bidWon reporting.
+        if (!this._eventsWired) {
+            this._wireEvents(tmpbjs, adUnits, hbData, this._enrichment(adUnitData));
+            this._eventsWired = true;
+        }
+
+        try {
+            tmpbjs.requestBids({
+                adUnits:  adUnits,
+                timeout:  effectiveTimeout,
+                bidsBackHandler: function (bids) {
+                    self._onBidsBack(bids, adUnitCode, tmpbjs, adUnitData, hbData, attempt, cb, timeoutOverride);
+                },
+            });
+            log.info('AuctionManager','requestBids fired — timeout='+effectiveTimeout+'ms attempt='+attempt);
+        } catch (e) { log.error('AuctionManager','requestBids threw: '+e.message); cb(null); }
+    };
+
+    AuctionManager.prototype._onBidsBack = function (bids, adUnitCode, tmpbjs, adUnitData, hbData, attempt, cb, timeoutOverride) {
+        var self    = this, log = this._log;
+        var hasBids = bids && (adUnitCode in bids);
+        var allBids = hasBids ? (bids[adUnitCode].bids || []) : [];
+        var winners = hasBids ? tmpbjs.getHighestCpmBids(adUnitCode) : [];
+        var winner  = winners[0] || null;
+
+        log.info('AuctionManager','_onBidsBack: attempt='+attempt+' bids='+allBids.length+' winner='+(winner ? winner.bidder+' $'+winner.cpm.toFixed(4) : 'none'));
+
+        // Internal per-auction retry (same req data, short backoff — NOT a waterfall round)
+        if (!winner && attempt < this._auc.auctionRetries) {
+            log.warn('AuctionManager','No winner attempt '+attempt+' — retrying in '+this._auc.auctionBackoff+'ms');
+            setTimeout(function(){
+                self._runAuction(tmpbjs, adUnitCode, adUnitData, null, hbData, attempt+1, cb, timeoutOverride);
+            }, this._auc.auctionBackoff);
+            return;
+        }
+
+        if (!winner) {
+            log.warn('AuctionManager','No winner after '+attempt+' attempt(s) — passing null to waterfall');
+            // IHBRep.req fired in run() once per round. IHBRep.unfilled fired by sldr_mod waterfall.
+            cb(null);
+            return;
+        }
+
+        log.ok('AuctionManager','Winner: bidder="'+winner.bidder+'" cpm=$'+winner.cpm.toFixed(4));
+
+        // IHBRep.imp fires when HB wins — reports winning + all bids to ihb endpoint
+        var ihb2 = this._getIhb();
+        if (ihb2 && ihb2.imp) {
+            ihb2.imp(allBids, winner, this._enrichment(adUnitData));
+            log.info('AuctionManager', 'IHBRep.imp fired for winner: "' + winner.bidder + '"');
+        }
+
+        cb({ winner: winner, allBids: allBids });
+    };
+
+    AuctionManager.prototype._wireEvents = function (tmpbjs, adUnits, hbData, enrichment) {
+        var self = this, log = this._log;
+        var trackMap = new Map(), bidIdMap = new Map();
+        try {
+            tmpbjs.onEvent('bidRequested', function (req) {
+                if (!req || !Array.isArray(req.bids)) return;
+                req.bids.forEach(function (bid) {
+                    var tID = bid.uniqueTrackingId; if (!tID) return;
+                    var u = adUnits.find(function(u){ return u.code===bid.adUnitCode && u.ortb2Imp && u.ortb2Imp.ext && u.ortb2Imp.ext.data && u.ortb2Imp.ext.data.customTrackingId===tID; });
+                    if (u) { trackMap.set(tID, Object.assign({}, u.ortb2Imp.ext.data, { bidId: bid.bidId })); bidIdMap.set(bid.bidId, tID); }
+                });
+            });
+        } catch(e) { log.warn('AuctionManager','onEvent(bidRequested) failed: '+e.message); }
+        try {
+            tmpbjs.onEvent('bidResponse', function (b) {
+                var tID  = bidIdMap.get(b.requestId) || self._fallbackTID(tmpbjs, b, trackMap);
+                var meta = tID ? trackMap.get(tID) : self._metaFrom(hbData, b.bidder);
+                Object.assign(b, meta||{}, enrichment);
+            });
+        } catch(e) { log.warn('AuctionManager','onEvent(bidResponse) failed: '+e.message); }
+        try {
+            tmpbjs.onEvent('bidWon', function (b) {
+                var tID  = bidIdMap.get(b.requestId) || self._fallbackTID(tmpbjs, b, trackMap);
+                var meta = tID ? trackMap.get(tID) : self._metaFrom(hbData, b.bidder);
+                Object.assign(b, meta||{}, enrichment);
+                var ihb = self._getIhb();
+                if (ihb && ihb.bidWon) ihb.bidWon(b, enrichment);
+            });
+        } catch(e) { log.warn('AuctionManager','onEvent(bidWon) failed: '+e.message); }
+        try {
+            tmpbjs.onEvent('noBid', function(nb){ log.warn('AuctionManager','noBid from "'+(nb.bidder||'?')+'"'); });
+        } catch(e){}
+        return { trackMap: trackMap, bidIdMap: bidIdMap };
+    };
+
+    AuctionManager.prototype._ensureScript = function (doc, onReady) {
+        // Use prebidUrl from AUCTION config (dynamic, not hardcoded)
+        var url = this._auc.prebidUrl, log = this._log;
+        if (doc.querySelector('script[src="'+url+'"]')) { log.info('AuctionManager','tmpbjs.js already in DOM'); onReady(); return; }
+        _injectScript(doc, url,
+            function(){ log.ok('AuctionManager','tmpbjs.js loaded'); onReady(); },
+            function(){ log.error('AuctionManager','tmpbjs.js failed to load'); onReady(); }
+        );
+        log.info('AuctionManager','injecting tmpbjs.js from '+url);
+    };
+
+    AuctionManager.prototype._pollPrebidReady = function (cb) {
+        var ns = this._auc.namespace, interval = this._auc.prebidPollInterval,
+            maxTries = this._auc.maxPrebidPollAttempts, log = this._log, attempts = 0;
+        var poll = setInterval(function () {
+            attempts++;
+            var tmpbjs = root[ns];
+            if (tmpbjs && typeof tmpbjs.requestBids === 'function') {
+                clearInterval(poll);
+                log.ok('AuctionManager','Prebid ready after '+(attempts*interval)+'ms');
+                cb(tmpbjs); return;
+            }
+            if (attempts >= maxTries) { clearInterval(poll); log.error('AuctionManager','Prebid not ready after '+(attempts*interval)+'ms'); cb(null); }
+        }, interval);
+    };
+
+    AuctionManager.prototype._enrichment = function (d) {
+        return { pid:d.pid, tid:d.tid, country:d.country, city:d.city, device:d.device, os:d.os, wb:d.wb };
+    };
+
+    AuctionManager.prototype._metaFrom = function (hbData, bidder) {
+        if (!bidder) return null;
+        var h = hbData.find(function(x){ return x.bidder && x.bidder.toLowerCase()===bidder.toLowerCase(); });
+        return h ? { buyer_name:h.buyer_name, buyer_id:h.buyer_id, bidderAdjustment:h.bidder_adjustment } : null;
+    };
+
+    AuctionManager.prototype._fallbackTID = function (tmpbjs, b, trackMap) {
+        var units = tmpbjs.adUnits; if (!Array.isArray(units)) return null;
+        var u = units.find(function(u){ return u.code===b.adUnitCode && Array.isArray(u.bids) && u.bids.some(function(x){return x.bidder===b.bidder;}); });
+        var t = u && u.ortb2Imp && u.ortb2Imp.ext && u.ortb2Imp.ext.data && u.ortb2Imp.ext.data.customTrackingId;
+        return (t && trackMap.has(t)) ? t : null;
+    };
+
+    root.AuctionManager = AuctionManager;
+    var _amInstance = new AuctionManager(tmHBConfig, AdUnitBuilder, SchainManager, null);
+    root.tmAuctionManager = _amInstance;
+    LOG.ok('AuctionManager', 'singleton mounted at window.tmAuctionManager');
+
+}(window));
+
+/* ============================================================================
+ * Display_tmCore — Platform.js loader
+ * ============================================================================ */
+(function () {
+    if (window.__tmsrv_platform_loaded) { startThreadHandler(); return; }
+    window.__tmsrv_platform_loaded = true;
+    if (typeof window.platform === 'undefined') {
+        // Use _tmInjectScript (set by HB IIFE) or fallback to direct createElement
+        var _inject = window._tmInjectScript || function(doc, src, onload, onerror) {
+            var s = doc.createElement('script'); s.src = src; s.type = 'text/javascript';
+            if (onload)  s.onload  = onload;
+            if (onerror) s.onerror = onerror;
+            (doc.head || doc.body).appendChild(s);
+        };
+        _inject(document,
+            'https://base.tmadsrv.com/platform.js',
+            function () { startThreadHandler(); },
+            function () { console.warn('[TapMind] platform.js failed to load'); startThreadHandler(); }
+        );
+    } else { startThreadHandler(); }
+})();
+
+function startThreadHandler() {
+    if (window.__tmsrv_thread_running) return;
+    window.__tmsrv_thread_running = true;
+    window.__tmsrv_threadHandle = setInterval(function () {
+        if (typeof window.tmsrv !== 'undefined' && typeof window.tmsrv.instances === 'undefined') { boot(); }
+        if (typeof window.tmsrv !== 'undefined' && typeof window.tmsrv.cmd !== 'undefined' && window.tmsrv.cmd.length > 0) {
+            window.tmsrv.createAdUnit(window.tmsrv.cmd.pop());
+        }
+    }, 1);
+}
+
+/* ============================================================================
+ * Display_tmCore — Display Endpoint Config
+ * ============================================================================ */
+(function () {
+    window.tmsrv = window.tmsrv || {};
+    if (window.tmsrv.display && window.tmsrv.display.ASU) return;
+
+    var domainRouteMap = [
+        { domains: [''], ASU: 'https://dsrv-srv-akamai.tmadsrv.com/ads', ASU_Re: 'https://vsrv-rpt-akamai.tmadsrv.com/api/v1/events' },
+    ];
+    var DEFAULTS = { ASU: 'https://dsrv-srv-akamai.tmadsrv.com/ads', ASU_Re: 'https://vsrv-rpt.tmadsrv.com/api/v1/events' };
+
+    function getCurrentDomain() { try { return window.location.hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return ''; } }
+
+    function resolveConfig(hostname) {
+        for (var i = 0; i < domainRouteMap.length; i++) {
+            var group = domainRouteMap[i];
+            for (var j = 0; j < group.domains.length; j++) {
+                var pattern = group.domains[j];
+                if (hostname === pattern || hostname.endsWith('.' + pattern)) { return { ASU: group.ASU, ASU_Re: group.ASU_Re }; }
+            }
+        }
+        return DEFAULTS;
+    }
+
+    var config = resolveConfig(getCurrentDomain());
+    window.tmsrv.display = { ASU: config.ASU, ASU_Re: config.ASU_Re };
+    if (!window.tmsrv.ASU) { window.tmsrv.ASU = window.tmsrv.display.ASU; window.tmsrv.ASU_Re = window.tmsrv.display.ASU_Re; }
+})();
+
+/* ============================================================================
+ * Display_tmCore — URL Debug Flag confirmation
+ * (window.__tmdebug already set once, at the very top of the HB IIFE above,
+ * via _installDebugFlag() — this block just keeps tmHBConfig in sync in case
+ * it was constructed before this point for any reason.)
+ * ============================================================================ */
+(function () {
+    if (window.tmHBConfig) {
+        window.tmHBConfig.debug = window.__tmdebug === true;
+        // tmHBConfig.log.enabled is a live getter now — no need to set it here.
+    }
+})();
+
+/* ============================================================================
+ * Display_tmCore — Boot Guard
+ * ============================================================================ */
+var __tmsrv_booted = false;
+
+function boot() {
+    if (__tmsrv_booted) return;
+    __tmsrv_booted = true;
+
+    window.tmsrv.createAdUnit = function (adDataFunction) {
+        var tmp = new window.tmsrv.adClass();
+        adDataFunction(tmp);
+        window.tmsrv.instances.push(tmp);
+    };
+
+    window.tmsrv.js = [];
+
+    window.tmsrv.sendBeacon = function (jsonRequest, retries) {
+        if (typeof retries === 'undefined') retries = 3;
+        var endpoint = jsonRequest._endpoint || window.tmsrv.display.ASU;
+        delete jsonRequest._endpoint;
+        if (navigator.sendBeacon(endpoint + '/' + jsonRequest.what, JSON.stringify(jsonRequest)) === false) {
+            if (retries > 0) { setTimeout(function () { window.tmsrv.sendBeacon(jsonRequest, retries - 1); }, 100); }
+            else { console.warn('[TapMind] sendBeacon failed after max retries:', jsonRequest.what); }
+        }
+    };
+
+    window.tmsrv.sendBeaconDisplay = function (jsonRequest, retries) {
+        if (typeof retries === 'undefined') retries = 3;
+        if (navigator.sendBeacon(window.tmsrv.display.ASU + '/' + jsonRequest.what, JSON.stringify(jsonRequest)) === false) {
+            if (retries > 0) { setTimeout(function () { window.tmsrv.sendBeaconDisplay(jsonRequest, retries - 1); }, 100); }
+            else { console.warn('[TapMind] sendBeaconDisplay failed after max retries:', jsonRequest.what); }
+        }
+    };
+
+    window.tmsrv.instances         = [];
+    window.tmsrv.instancesMetadata = [];
+    window.tmsrv.header_bidding    = false;
+
+    window.tmsrv.getRandomInt = function (min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; };
+    window.tmsrv.generateId   = function () {
+        var ts = (+new Date).toString(), parts = ts.split('').reverse(), id = '';
+        for (var i = 0; i < 8; ++i) { id += parts[window.tmsrv.getRandomInt(0, parts.length - 1)]; }
+        return id;
+    };
+
+    window.tmsrv.getWindowFromIframe = function (iframe) {
+        var doc;
+        if (iframe.contentWindow) return iframe.contentWindow;
+        if (iframe.window)        return iframe.window;
+        if (iframe.contentDocument) doc = iframe.contentDocument;
+        if (!doc && iframe.document) doc = iframe.document;
+        if (doc && doc.defaultView)  return doc.defaultView;
+        if (doc && doc.parentWindow) return doc.parentWindow;
+        return undefined;
+    };
+
+    window.tmsrv.viewability = function (e) {
+        var viewability = 0;
+        try {
+            var viewport   = { top: window.tmsrv.W.pageYOffset, bottom: window.tmsrv.W.pageYOffset + window.tmsrv.W.innerHeight };
+            var rect       = e.getBoundingClientRect();
+            var elementPos = { top: rect.y + window.tmsrv.W.pageYOffset, bottom: rect.y + rect.height + window.tmsrv.W.pageYOffset };
+            if (viewport.top > elementPos.bottom || viewport.bottom < elementPos.top) return 0;
+            if (viewport.top < elementPos.top && viewport.bottom > elementPos.bottom) return 100;
+            if (elementPos.top < viewport.top && elementPos.bottom > viewport.bottom) return 100;
+            var elementHeight = rect.height;
+            var elementHeightInView = elementHeight;
+            if (elementPos.top    < viewport.top)    { elementHeightInView = elementHeight - (window.tmsrv.W.pageYOffset - elementPos.top); }
+            if (elementPos.bottom > viewport.bottom) { elementHeightInView = elementHeightInView - (elementPos.bottom - viewport.bottom); }
+            viewability = Math.round((elementHeightInView / window.innerHeight) * 100);
+        } catch (ex) {}
+        return viewability;
+    };
+
+    window.tmsrv.enableLog = function (flag) { window.tmsrv.enableLog = flag; };
+    window.tmsrv.log       = function (json) { if (window.tmsrv.enableLog === false) return; };
+
+    window.tmsrv.httpGet = function (url, callback, context) {
+        var xhr = null;
+        try { xhr = new window.tmsrv.W.XMLHttpRequest(); } catch(e) {}
+        if (!xhr) { console.warn('[TapMind] XMLHttpRequest not available'); return; }
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState === 4) {
+                if (xhr.status === 200) { try { callback(JSON.parse(xhr.responseText), context); } catch(ex) { console.warn('[TapMind] httpGet parse error:', ex); } }
+                else { console.warn('[TapMind] httpGet error, status:', xhr.status); }
+            }
+        };
+        xhr.open('GET', url); xhr.withCredentials = true;
+        xhr.setRequestHeader('Accept', 'text/plain');
+        xhr.setRequestHeader('Content-Type', 'text/plain; charset=UTF-8');
+        xhr.send();
+    };
+
+    window.tmsrv.httpPost = function (url, jsonData, callback, context) {
+        var xhr = null;
+        try { xhr = new window.tmsrv.W.XMLHttpRequest(); } catch(e) {}
+        if (!xhr) { console.warn('[TapMind] XMLHttpRequest not available'); return; }
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState === 4) {
+                if (xhr.status === 200) { try { callback(JSON.parse(xhr.responseText), context); } catch(ex) { console.warn('[TapMind] httpPost parse error:', ex); } }
+                else { console.warn('[TapMind] httpPost error, status:', xhr.status); }
+            }
+        };
+        xhr.open('POST', url); xhr.withCredentials = true;
+        xhr.setRequestHeader('Accept', 'text/plain');
+        xhr.setRequestHeader('Content-Type', 'text/plain; charset=UTF-8');
+        xhr.send(JSON.stringify(jsonData));
+    };
+
+    window.tmsrv.resize = function (element, alignment, percentage) {
+        percentage = percentage / 100.0;
+        var transformOrigin = '0% 0%', transform = 'scale(' + percentage + ',' + percentage + ')';
+        if      (alignment === 'left')   { element.style.left  = '0%'; }
+        else if (alignment === 'center') { element.style.left  = '50%'; transform += ' translate(-50%,0%)'; }
+        else if (alignment === 'right')  { element.style.right = '0%'; }
+        ['webkitTransformOrigin','mozTransformOrigin','msTransformOrigin','oTransformOrigin','transformOrigin'].forEach(function(p){ element.style[p] = transformOrigin; });
+        ['webkitTransform','mozTransform','msTransform','oTransform','transform'].forEach(function(p){ element.style[p] = transform; });
+    };
+
+    window.tmsrv.resizeInt = function (element, alignment, percentage) {
+        percentage = percentage / 100.0;
+        var transformOrigin = '0% 0%', transform = 'scale(' + percentage + ',' + percentage + ')';
+        if      (alignment === 'left')   { element.style.left  = '0%'; }
+        else if (alignment === 'center') { element.style.left  = '50%'; transform += ' translate(-50%,-50%)'; }
+        else if (alignment === 'right')  { element.style.right = '0%'; }
+        ['webkitTransformOrigin','mozTransformOrigin','msTransformOrigin','oTransformOrigin','transformOrigin'].forEach(function(p){ element.style[p] = transformOrigin; });
+        ['webkitTransform','mozTransform','msTransform','oTransform','transform'].forEach(function(p){ element.style[p] = transform; });
+    };
+
+    window.tmsrv.createIframe = function (parent, doc, width, height, content, adData, callback) {
+        var html = '<!doctype html><html><head></head><body topmargin=0 leftmargin=0 marginwidth=0 marginheight=0>';
+        html += decodeURIComponent(escape(content));
+        html += '</body></html>';
+        parent.innerHTML = '';
+        var adIframe = doc.createElement('iframe');
+        parent.appendChild(adIframe);
+        adIframe.setAttribute('width',        width);
+        adIframe.setAttribute('height',       height);
+        adIframe.setAttribute('allow',        'autoplay;fullscreen;');
+        adIframe.setAttribute('frameborder',  0);
+        adIframe.setAttribute('scrolling',    'no');
+        adIframe.setAttribute('marginheight', 0);
+        adIframe.setAttribute('marginwidth',  0);
+        adIframe.style.width    = width  + 'px';
+        adIframe.style.height   = height + 'px';
+        adIframe.style.margin   = '0px';
+        adIframe.style.padding  = '0px';
+        adIframe.style.overflow = 'hidden';
+        adIframe.tmsrv = window.tmsrv;
+        if (typeof adData   !== 'undefined' && adData   != null) { adIframe.adData = adData; adIframe.adCode = window.tmsrv; }
+        if (typeof callback !== 'undefined' && callback != null) { adIframe.callback = callback; }
+        var adIframeCtl = window.tmsrv.getWindowFromIframe(adIframe);
+        adIframeCtl.document.open();
+        adIframeCtl.document.write(html);
+        adIframeCtl.document.close();
+        return adIframe;
+    };
+
+    window.tmsrv.clickTrack          = function () {};
+    window.tmsrv.refreshedImpression = function () {};
+    window.tmsrv.isWindow  = function (obj)  { return obj != null && obj === obj.window; };
+    window.tmsrv.getWindow = function (elem) { return window.tmsrv.isWindow(elem) ? elem : elem.nodeType === 9 && elem.defaultView; };
+    window.tmsrv.offset    = function (elem) {
+        var docElem, win, box = { top: 0, left: 0 }, doc = elem && elem.ownerDocument;
+        docElem = doc.documentElement;
+        if (typeof elem.getBoundingClientRect !== typeof undefined) { box = elem.getBoundingClientRect(); }
+        win = window.tmsrv.getWindow(doc);
+        return { top: box.top + win.pageYOffset - docElem.clientTop, left: box.left + win.pageXOffset - docElem.clientLeft };
+    };
+    window.tmsrv.getDim = function (element) {
+        return { width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height,
+                 left: window.tmsrv.offset(element).left, top: window.tmsrv.offset(element).top };
+    };
+
+    /* ── adClass ── */
+    window.tmsrv.adClass = function () {
+        this.instanceId    = window.tmsrv.generateId();
+        this.user_consent  = 0;
+        this.partner_id    = null; this.publisher_id = null;
+        this.ad_unit_id    = null; this.ad_unit_name = null;
+        this.width         = null; this.height       = null;
+        this.root          = null; this.domain       = null;
+        this.enableLog     = true; this.clickUrl     = null;
+        this._pipeline     = 'display';
+
+        this.log      = function () {};
+        this.AdSlot   = function (r) { this.root = (typeof r === 'string') ? document.getElementById(r) : r; };
+        this.CacheBuster = function (cb) {};
+        this.UserConsent = function (uc) { this.user_consent = (uc === '%%USER_CONSENT%%') ? 0 : Number(uc); };
+        this.Meta     = function (_meta) {
+            var meta = _meta.split('/');
+            this.partner_id   = Number(meta[1].substring(8));
+            this.publisher_id = Number(meta[2].substring(8));
+            this.ad_unit_id   = Number(meta[3].substring(8));
+            this.ad_unit_name = meta[4];
+        };
+        this.Domain    = function (_domain)   { this.domain    = _domain; };
+        this.EnableLog = function (flag)      { this.enableLog = window.tmsrv.enableLog = flag; };
+        this.ClickUrl  = function (_clickUrl) { this.clickUrl  = _clickUrl; };
+        this.ViewURL   = function (viewURL)   {};
+
+        this._getASU = function () { return window.tmsrv.display.ASU; };
+
+        this.Execute = function () {
+            window.tmsrv.W           = window;
+            window.tmsrv.isTopWindow = false;
+            window.tmsrv.isRootTop   = false;
+            var contextual_targeting = false;
+            var title = '', meta_keywords = '', meta_description = '', site = '', language = '';
+            try {
+                window.tmsrv.W       = window.top;
+                window.tmsrv.isTopWindow = true;
+                contextual_targeting = true;
+                title    = window.tmsrv.W.document.title;
+                site     = window.tmsrv.W.location.hostname;
+                language = window.tmsrv.W.document.documentElement.lang || '';
+                try { meta_keywords    = Array.from(window.tmsrv.W.document.getElementsByTagName('META')).filter(function(m){ return m.name === 'keywords'; })[0].content; } catch(ex){}
+                try { meta_description = Array.from(window.tmsrv.W.document.getElementsByTagName('META')).filter(function(m){ return m.name === 'description'; })[0].content; } catch(ex){}
+            } catch(ex) {
+                try { window.tmsrv.D = window.tmsrv.W.document; } catch(ex1) { window.tmsrv.W = window; }
+            }
+            window.tmsrv.D = window.tmsrv.W.document;
+            if (this.root == null) return;
+            if (this.ad_unit_id != null) {
+                var jsonData = {
+                    cb: (new Date()).getTime(), id: this.ad_unit_id, what: 'req',
+                    user_consent: this.user_consent, contextual_targeting: contextual_targeting,
+                    title: title, keywords: meta_keywords, description: meta_description,
+                    site: site, language: language, url: (window.location.href.substring(0, 500)), domain: this.domain,
+                };
+                window.tmsrv.httpPost(this._getASU() + '/req', jsonData, this.init, this);
+            }
+        };
+
+        this.init = function (list, This) {
+            window.tmsrv.log(list, 'display');
+            if (list.length === 0) return;
+            for (var i = 0; i < list.length; ++i) {
+                window.tmsrv.instancesMetadata.push(list[i].pid);
+                if (list[i].lce > 0) continue;
+
+                /* ─────────────────────────────────────────────────────────
+                 * FIX: fire the initial REQUEST IMPRESSION (imp) beacon
+                 * right here — immediately after the /req response is
+                 * parsed and lce=0 is confirmed, BEFORE any template
+                 * constructor runs (so_mod's session-limit checks, priority
+                 * queue, DOM cleanup, HB auction, SSP rendering, etc).
+                 *
+                 * Previously imp() only fired deep inside each template's
+                 * own onLoad handler (e.g. so_mod.js adEngine()), so it was
+                 * gated behind however long template construction + HB/SSP
+                 * setup took, even though the /req response itself already
+                 * told us the impression is valid (lce=0).
+                 *
+                 * This ONLY covers the FIRST render of a given /req response.
+                 * Refreshes go through window.tmsrv.rreq() directly (never
+                 * through this init()), so rimp() correctly stays inside the
+                 * template's own refresh handling — unaffected by this change.
+                 *
+                 * viewability needs a DOM element: This.root is the ad slot
+                 * container set via adClass.AdSlot(), already available here
+                 * since Execute() only calls httpPost (and therefore init())
+                 * after AdSlot()/Meta() have run.
+                 *
+                 * IMPORTANT: templates (so_mod.js and any other template
+                 * sharing this init()) must NOT also call utils.imp() for the
+                 * first render themselves anymore, or the impression gets
+                 * double-counted/double-billed. so_mod.js has been updated
+                 * accordingly — check any other template wired to this same
+                 * init() path before rolling this out.
+                 * ───────────────────────────────────────────────────────── */
+                try {
+                    if (This.root && list[i].AdUnitID != null) {
+                        var _viewabilityNow = window.tmsrv.viewability(This.root);
+                        window.tmsrv.imp(list[i].AdUnitID, list[i].pid, list[i].tid, _viewabilityNow);
+                        if (window.__tmdebug) {
+                            console.log('%c[TapMind:init] REQUEST IMPRESSION (imp) fired from tmCore.init() | id="' + list[i].AdUnitID + '" pid="' + list[i].pid + '" tid="' + list[i].tid + '" viewability=' + _viewabilityNow, 'color:#80cbc4;font-weight:700;font-size:11px');
+                        }
+                        list[i]._tmCoreImpFired = true; // marker in case templates want to check/skip
+                    } else if (window.__tmdebug) {
+                        console.warn('[TapMind:init] Could not fire imp() from tmCore — This.root or AdUnitID missing.');
+                    }
+                } catch (e) {
+                    console.warn('[TapMind:init] imp() beacon threw: ' + e.message);
+                }
+
+                try { list[i].postBid = atob(list[i].postBid); } catch(ex){}
+                var creative_content = list[i].creative_content;
+                if (typeof list[i].his === 'undefined' && typeof list[i].stdb === 'undefined') {
+                    try {
+                        creative_content.tags = [];
+                        for (var j = 1; j <= 5; ++j) { if (creative_content['tag' + j].length > 0) { creative_content.tags.push(creative_content['tag' + j]); } }
+                        for (var j = 1; j <= 5; ++j) { delete creative_content['tag' + j]; }
+                    } catch(ex){}
+                    list[i].creative_content = creative_content;
+                    if (list[i].type === 'stdb') { This.stdb2(list[i], This); }
+                    else                          { This.highImpact2(list[i], This); }
+                } else {
+                    list[i].creative_content = creative_content;
+                    if (list[i].type === 'stdb') { This.stdb1(list[i], This); }
+                    else                          { This.highImpact1(list[i], This); }
+                }
+            }
+        };
+
+        this._loadCreativeJs = function (jsFile, initFunction, This, jsonResponse) {
+            var _inject2 = window._tmInjectScript || function(doc, src, onload, onerror) {
+                var s = doc.createElement('script'); s.src = src; s.type = 'text/javascript';
+                if (onload)  s.onload  = onload;
+                if (onerror) s.onerror = onerror;
+                (doc.head || doc.body).appendChild(s);
+            };
+            _inject2(window.tmsrv.D, jsFile,
+                function () {
+                    var fn = window.tmsrv.W[initFunction];
+                    if (typeof fn !== 'function') { console.warn('[TapMind] Init function not found:', initFunction); return; }
+                    try { new fn(This.root, jsonResponse, window.tmsrv); }
+                    catch (e) { console.error('[TapMind] Creative init failed:', e.message); }
+                },
+                function () { console.warn('[TapMind] Creative JS failed to load:', jsFile); }
+            );
+        };
+
+        /**
+         * PREBID_URL — Prebid build used by tmCore-owned (usesTmAuctionManager)
+         * templates only. Templates that own their own HB engine (e.g. sldr_mod's
+         * PlayerHeaderBidding) load their OWN Prebid build from their OWN URL and
+         * never touch this path — see the usesTmAuctionManager gate below.
+         */
+        var PREBID_URL = '//dsrv.tmadsrv.com/auction/tmpbjs.js';
+        var PREBID_NAMESPACE = (window.tmHBConfig && window.tmHBConfig.namespace) || 'tmpbjs';
+
+        /**
+         * LEGACY_DECOY_URLS — kept for backward compatibility with any legacy
+         * templates that still do their own doc.querySelector('script[src="..."]')
+         * dedupe check against a hardcoded Prebid URL BEFORE injecting their own
+         * script, in setups where usesTmAuctionManager IS true and tmCore's
+         * preload is expected to satisfy that check. NOT used or needed for
+         * sldr_mod, since tmCore never preloads Prebid for sldr_mod units at all
+         * (see _loadWithPrebid below) — sldr_mod's own ensureScript() runs its
+         * own real fetch, uninterfered with.
+         */
+        var LEGACY_DECOY_URLS = [
+            '//dsrv-prbd.tmadsrv.com/tmpbjs.js',
+        ];
+
+        function _seedLegacyDecoyScripts(doc) {
+            try {
+                LEGACY_DECOY_URLS.forEach(function (legacyUrl) {
+                    if (doc.querySelector('script[src="' + legacyUrl + '"]')) return; // already present
+                    // type="text/plain" is the standard "do not execute, do not fetch src"
+                    // convention (same technique used by tag managers like GTM for consent-gated
+                    // scripts) — universally supported, browser never requests the src URL.
+                    var decoy = doc.createElement('script');
+                    decoy.setAttribute('type', 'text/plain');
+                    decoy.setAttribute('src', legacyUrl);
+                    decoy.setAttribute('data-tm-decoy', '1');
+                    (doc.head || doc.body).appendChild(decoy);
+                    if (window.__tmdebug) console.log('[TapMind] Seeded inert decoy script for legacy URL (no network fetch): ' + legacyUrl);
+                });
+            } catch (e) {
+                console.warn('[TapMind] _seedLegacyDecoyScripts failed: ' + e.message);
+            }
+        }
+
+        /**
+         * _lockPrebidNamespace — protects window[PREBID_NAMESPACE] from being
+         * overwritten by a SECOND Prebid build injected by an old template that
+         * still hardcodes a different Prebid URL in its own ensureScript().
+         * Only relevant/invoked for usesTmAuctionManager:true templates — see
+         * _loadWithPrebid below. sldr_mod units never reach this function at all,
+         * so this never fights with sldr_mod's own Prebid load.
+         */
+        function _lockPrebidNamespace(ns) {
+            try {
+                var existing = window[ns];
+                if (!existing || typeof existing.requestBids !== 'function') return;
+                var locked = existing;
+                Object.defineProperty(window, ns, {
+                    configurable: true,
+                    enumerable: true,
+                    get: function () { return locked; },
+                    set: function (v) {
+                        if (v && typeof v.requestBids === 'function' && v !== locked) {
+                            console.warn('[TapMind] Blocked a second Prebid build from overwriting window.' + ns +
+                                ' — a template likely injected its own Prebid script with a different/legacy URL. ' +
+                                'tmCore keeps the build it originally loaded (' + PREBID_URL + ').');
+                            return; // ignore the overwrite — keep tmCore's build
+                        }
+                        locked = v; // allow non-Prebid or same-instance assignments through
+                    },
+                });
+                if (window.__tmdebug) console.log('[TapMind] window.' + ns + ' locked to tmCore\'s Prebid build — duplicate injections will be ignored.');
+            } catch (e) {
+                // If defineProperty fails for any reason, fail open (no lock) rather than break the page.
+                console.warn('[TapMind] _lockPrebidNamespace could not lock window.' + ns + ': ' + e.message);
+            }
+        }
+
+        this._loadWithPrebid = function (adDataUrl, This, jsonResponse) {
+            var jsFile       = adDataUrl.split('~')[0];
+            var initFunction = adDataUrl.split('~')[1];
+            var self         = this;
+
+            var _inject3 = window._tmInjectScript || function(doc, src, onload, onerror) {
+                var s = doc.createElement('script'); s.src = src; s.type = 'text/javascript';
+                if (onload)  s.onload  = onload;
+                if (onerror) s.onerror = onerror;
+                (doc.head || doc.body).appendChild(s);
+            };
+
+            var _hbArray = (jsonResponse.header_bidding && jsonResponse.header_bidding.length > 0)
+                ? jsonResponse.header_bidding
+                : (jsonResponse.his && jsonResponse.his.header_bidding && jsonResponse.his.header_bidding.length > 0
+                    ? jsonResponse.his.header_bidding
+                    : null);
+            if (_hbArray && !jsonResponse.header_bidding) jsonResponse.header_bidding = _hbArray;
+
+            /* ─────────────────────────────────────────────────────────────
+             * usesTmAuctionManager GATE  (the actual dual-Prebid-load fix)
+             *
+             * Templates that manage their OWN HB engine (sldr_mod's
+             * PlayerHeaderBidding, which loads Prebid from its own hardcoded
+             * URL '//dsrv-prbd.tmadsrv.com/tmpbjs.js') must set
+             * his.usesTmAuctionManager = false (or omit it entirely).
+             * For those, tmCore does NOT touch Prebid in any way — no
+             * preload, no dedupe seeding, no namespace locking. It hands
+             * straight off to _loadCreativeJs so sldr_mod's own
+             * ensureScript() is the ONE AND ONLY thing that ever injects
+             * a <script src="...tmpbjs.js">. That removes the race that
+             * was causing two separate tmpbjs.js network requests and a
+             * corrupted/delayed bidsBackHandler.
+             *
+             * Templates that DO call window.tmAuctionManager.run() (the
+             * newer tmCore-native path) must set his.usesTmAuctionManager
+             * = true from the server, and get the exact same preload
+             * behaviour as before this change.
+             * ───────────────────────────────────────────────────────────── */
+            var usesTmAuctionManager = !!(jsonResponse.his && jsonResponse.his.usesTmAuctionManager);
+
+            if (!usesTmAuctionManager) {
+                if (window.__tmdebug) {
+                    console.log('[TapMind] his.usesTmAuctionManager is false/unset — template owns its own HB engine (e.g. sldr_mod). tmCore is NOT touching Prebid for this unit.');
+                }
+                self._loadCreativeJs(jsFile, initFunction, This, jsonResponse);
+                return;
+            }
+
+            /**
+             * tmCore's job here is ONLY to ensure tmpbjs.js is loaded and ready.
+             * For usesTmAuctionManager:true templates, the template calls
+             * window.tmAuctionManager.run() itself per waterfall round.
+             */
+
+            /**
+             * _verifyPrebidModules — logs (once) which modules are actually compiled
+             * into the loaded Prebid build, so you can confirm bidder/userId/RTD
+             * support at any time without guessing. Diagnostic-only, gated on
+             * ?tmdebug=1.
+             */
+            function _verifyPrebidModules(pbjs, namespace, url) {
+                if (!window.__tmdebug) return;
+                var flagKey = '__tm_module_check_' + namespace;
+                if (window[flagKey]) return;
+                window[flagKey] = true;
+
+                try {
+                    var installed = pbjs.installedModules || [];
+                    var hasUserIdCore = installed.indexOf('userId') !== -1;
+                    var hasNovatiq    = installed.indexOf('novatiqIdSystem') !== -1;
+                    var idModulesFound = installed.filter(function(m) { return /IdSystem$/.test(m); });
+
+                    console.log(
+                        '%c[TapMind:ModuleCheck] namespace="' + namespace + '" url="' + url + '"\n' +
+                        '  userId core module present: ' + hasUserIdCore + '\n' +
+                        '  novatiqIdSystem present: ' + hasNovatiq + '\n' +
+                        '  all *IdSystem modules found: [' + idModulesFound.join(', ') + ']\n' +
+                        '  total installedModules: ' + installed.length,
+                        'color:#ffcc02;font-weight:700;font-size:11px;background:#222;padding:2px 4px'
+                    );
+
+                    if (!hasUserIdCore) {
+                        console.warn('[TapMind:ModuleCheck] ⚠️ "' + namespace + '" has NO userId module — userIds config is a silent no-op.');
+                    } else if (!hasNovatiq) {
+                        console.warn('[TapMind:ModuleCheck] ⚠️ "' + namespace + '" has userId core but NOT novatiqIdSystem.');
+                    } else {
+                        console.log('%c[TapMind:ModuleCheck] ✅ "' + namespace + '" fully supports novatiq userId resolution.', 'color:#66bb6a;font-weight:700');
+                    }
+
+                    var hasCurrency = installed.indexOf('currency') !== -1;
+                    var hasRtd      = installed.indexOf('rtdModule') !== -1;
+                    var hasAdagio   = installed.indexOf('adagioRtdProvider') !== -1 || installed.indexOf('adagioAnalyticsAdapter') !== -1;
+                    console.log('[TapMind:ModuleCheck] currency module: ' + hasCurrency + ' | realTimeData(rtdModule): ' + hasRtd + ' | adagio RTD: ' + hasAdagio);
+                    if (!hasCurrency) console.warn('[TapMind:ModuleCheck] ⚠️ missing currency module — currency config is a silent no-op.');
+                    if (!hasRtd)      console.warn('[TapMind:ModuleCheck] ⚠️ missing rtdModule — realTimeData config is a silent no-op.');
+
+                    var COMMON_BIDDERS = [
+                        'pixfuture', 'vaayaMedia', 'limelightDigital', 'equativ',
+                        'smartadserver', 'adagio', 'appnexus', 'rubicon', 'pubmatic',
+                        'openx', 'criteo', 'ix', 'sovrn', 'triplelift', 'gumgum',
+                    ];
+                    if (pbjs.bidderRegistry) {
+                        var missingBidders = COMMON_BIDDERS.filter(function(b) { return !pbjs.bidderRegistry[b]; });
+                        var presentBidders = COMMON_BIDDERS.filter(function(b) { return !!pbjs.bidderRegistry[b]; });
+                        console.log('[TapMind:ModuleCheck] bidders PRESENT: [' + presentBidders.join(', ') + ']');
+                        if (missingBidders.length) {
+                            console.warn('[TapMind:ModuleCheck] ⚠️ bidders MISSING (will be silently skipped if used): [' + missingBidders.join(', ') + ']');
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[TapMind:ModuleCheck] Could not inspect installedModules: ' + e.message);
+                }
+            }
+
+            function _pollPrebidThenLoad() {
+                var maxTries = (window.tmHBConfig && window.tmHBConfig.auction && window.tmHBConfig.auction.maxPrebidPollAttempts) || 20;
+                var pollMs   = (window.tmHBConfig && window.tmHBConfig.auction && window.tmHBConfig.auction.prebidPollInterval)    || 10;
+                var attempts = 0;
+                var poll = setInterval(function () {
+                    attempts++;
+                    var pbjs = window[PREBID_NAMESPACE];
+                    if (pbjs && typeof pbjs.requestBids === 'function') {
+                        clearInterval(poll);
+                        if (window.__tmdebug) console.log('%c[TapMind] Prebid ready after ' + (attempts * pollMs) + 'ms', 'color:#66bb6a;font-weight:700');
+                        _verifyPrebidModules(pbjs, PREBID_NAMESPACE, PREBID_URL);
+                        _lockPrebidNamespace(PREBID_NAMESPACE);
+                        _seedLegacyDecoyScripts(window.tmsrv.D);
+                        self._loadCreativeJs(jsFile, initFunction, This, jsonResponse);
+                        return;
+                    }
+                    if (attempts >= maxTries) {
+                        clearInterval(poll);
+                        if (window.__tmdebug) console.warn('[TapMind] Prebid not ready after ' + (attempts * pollMs) + 'ms — loading template anyway');
+                        self._loadCreativeJs(jsFile, initFunction, This, jsonResponse);
+                    }
+                }, pollMs);
+            }
+
+            if (window.__tmdebug) {
+                console.log('[TapMind] usesTmAuctionManager=true | header_bidding check | top-level=' + !!(jsonResponse.header_bidding && jsonResponse.header_bidding.length) +
+                    ' | his.header_bidding=' + !!(jsonResponse.his && jsonResponse.his.header_bidding && jsonResponse.his.header_bidding.length) +
+                    ' | resolved length=' + (_hbArray ? _hbArray.length : 0));
+            }
+
+            if (_hbArray && _hbArray.length > 0) {
+                if (!window.tmsrv.header_bidding) {
+                    _inject3(window.tmsrv.D, PREBID_URL,
+                        function () {
+                            window.tmsrv.header_bidding = true;
+                            _pollPrebidThenLoad();
+                        },
+                        function () {
+                            console.warn('[TapMind] prebid.js failed to load from ' + PREBID_URL + ' — loading template anyway');
+                            self._loadCreativeJs(jsFile, initFunction, This, jsonResponse);
+                        }
+                    );
+                } else {
+                    var pbjsExisting = window[PREBID_NAMESPACE];
+                    if (pbjsExisting && typeof pbjsExisting.requestBids === 'function') {
+                        _lockPrebidNamespace(PREBID_NAMESPACE);
+                        _seedLegacyDecoyScripts(window.tmsrv.D);
+                        self._loadCreativeJs(jsFile, initFunction, This, jsonResponse);
+                    } else {
+                        _pollPrebidThenLoad();
+                    }
+                }
+            } else {
+                if (window.__tmdebug) console.log('[TapMind] No header_bidding config — loading template with SSPTag only');
+                self._loadCreativeJs(jsFile, initFunction, This, jsonResponse);
+            }
+        };
+
+        this.stdb1       = function (jsonResponse, This) { var adData = jsonResponse.stdb;             if (typeof adData.url !== 'undefined') { This._loadWithPrebid(adData.url, This, jsonResponse); } };
+        this.highImpact1 = function (jsonResponse, This) { var adData = jsonResponse.his;              if (typeof adData.url !== 'undefined') { This._loadWithPrebid(adData.url, This, jsonResponse); } };
+        this.stdb2       = function (jsonResponse, This) { var adData = jsonResponse.creative_content; if (typeof adData.url !== 'undefined') { This._loadWithPrebid(adData.url, This, jsonResponse); } };
+        this.highImpact2 = function (jsonResponse, This) { var adData = jsonResponse.creative_content; if (typeof adData.url !== 'undefined') { This._loadWithPrebid(adData.url, This, jsonResponse); } };
+    };
+
+    /* ── Global event methods ── */
+    window.tmsrv.imp    = function (ad_unit_id, pid, tid, viewability) { window.tmsrv.sendBeacon({ what: 'imp',    AdUnitID: ad_unit_id, pid: pid, tid: tid, viewability: viewability }); };
+    window.tmsrv.click  = function (ad_unit_id, pid, tid)              { window.tmsrv.sendBeacon({ what: 'click',  AdUnitID: ad_unit_id, pid: pid, tid: tid }); };
+    window.tmsrv.rimp   = function (ad_unit_id, pid, tid, viewability) { window.tmsrv.sendBeacon({ what: 'rimp',   AdUnitID: ad_unit_id, pid: pid, tid: tid, viewability: viewability }); };
+    window.tmsrv.rclick = function (ad_unit_id, pid, tid)              { window.tmsrv.sendBeacon({ what: 'rclick', id: ad_unit_id, pid: pid, tid: tid }); };
+    window.tmsrv.pload  = function (ad_unit_id, pid, tid, viewability) { window.tmsrv.sendBeacon({ what: 'pload',  id: ad_unit_id, pid: pid, tid: tid, viewability: viewability }); };
+    window.tmsrv.stop   = function ()                                   { window.tmsrv.sendBeacon({ what: 'stop',   list: window.tmsrv.instancesMetadata }); };
+
+    window.tmsrv.rreq = function (ad_unit_id, pid, callback) {
+        var jsonRequest = { cb: (new Date()).getTime(), AdUnitID: ad_unit_id, what: 'rreq', pid: pid };
+        window.tmsrv.httpPost(window.tmsrv.display.ASU + '/rreq', jsonRequest, function (adUnit) {
+            window.tmsrv.log(adUnit, 'display');
+            if (adUnit === '[]') return;
+            if (adUnit.lce === 0) { callback(adUnit); }
+        }, null);
+    };
+
+    window.tmsrv.tevt = function (args, retries) {
+        if (typeof retries === 'undefined') retries = 3;
+        var status = navigator.sendBeacon(window.tmsrv.display.ASU_Re, JSON.stringify(args));
+        if (!status && retries > 0) { setTimeout(function () { window.tmsrv.tevt(args, retries - 1); }, 100); }
+        else if (!status) { console.warn('sendBeacon failed after max retries:', args); }
+    };
+
+    window.tmsrv.d_imp   = function (ad_unit_id, pid, tid, viewability) { window.tmsrv.sendBeaconDisplay({ what: 'imp',   AdUnitID: ad_unit_id, pid: pid, tid: tid, viewability: viewability }); };
+    window.tmsrv.d_click = function (ad_unit_id, pid, tid)              { window.tmsrv.sendBeaconDisplay({ what: 'click', AdUnitID: ad_unit_id, pid: pid, tid: tid }); };
+
+    window.tmsrv.d_rreq = function (ad_unit_id, pid, callback) {
+        var jsonRequest = { cb: (new Date()).getTime(), AdUnitID: ad_unit_id, what: 'rreq', pid: pid };
+        window.tmsrv.httpPost(window.tmsrv.display.ASU + '/rreq', jsonRequest, function (adUnit) {
+            window.tmsrv.log(adUnit, 'display');
+            if (adUnit === '[]') return;
+            if (adUnit.lce === 0) { callback(adUnit); }
+        }, null);
+    };
+
+    window.tmsrv.d_tevt = function (args, retries) {
+        if (typeof retries === 'undefined') retries = 3;
+        var status = navigator.sendBeacon(window.tmsrv.display.ASU_Re, JSON.stringify(args));
+        if (!status && retries > 0) { setTimeout(function () { window.tmsrv.d_tevt(args, retries - 1); }, 100); }
+        else if (!status) { console.warn('sendBeacon (display) failed after max retries:', args); }
+    };
+}

@@ -1,0 +1,154 @@
+# ============================================================
+# JARVIS AI OS — Requirements
+# ============================================================
+#
+# QUICK INSTALL (recommended — all features):
+#   pip install -r requirements.txt
+#   playwright install chromium
+#
+# DEFAULT UI is PySide6 (interface/launch.py, the Qt HUD entry point).
+# PyQt6 is kept only for the legacy --legacy-ui path (interface/jarvis_ui.py).
+# PyQt6 and PySide6 CANNOT coexist in the same venv —
+#   both are listed here for reference; comment out whichever you don't use.
+#   There is no jarvis.py in this repo — entry points are server.py (networked
+#   brain), main.py (local console REPL), start.py (launcher), and
+#   interface/launch.py (Qt HUD).
+#
+# NOTES:
+#   • PyAudio on Windows: pip install PyAudio (pre-built wheel, no compile)
+#   • torch is only needed for local Whisper / local embedding models.
+#     Skip for cloud-only (Groq STT + Gemini) deployments.
+#   • audioop is removed in Python 3.13 — hotword.py and microphone.py
+#     use it; stay on Python 3.11 or 3.12.
+#   • winsdk is Windows-only and required for media transport controls
+#     (play/pause/next/prev). Commented by default — uncomment on Windows.
+#   • After `playwright install chromium` you can also run:
+#     `playwright install-deps` on Linux to pull system libraries.
+# ============================================================
+
+
+# ── Core / Config ──────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+pyyaml>=6.0
+structlog>=24.0.0
+
+# ── Server (server.py — FastAPI + WebSocket backend) ───────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+websockets>=12.0
+
+
+# ── LLM Providers ──────────────────────────────────────────────────────
+# Groq — primary provider (fast inference) + Whisper STT
+groq>=0.9.0
+
+# Gemini — secondary provider / reasoning.
+# Keep only the newer SDK; gemini_provider.py falls back gracefully if absent.
+google-genai>=0.8.0
+
+# Anthropic — optional fallback provider
+anthropic>=0.25.0
+
+# HTTP client (web/search tools, async requests)
+aiohttp>=3.9.0
+requests>=2.31.0
+httpx>=0.27.0             # async HTTP test client (test_server.py); also useful for tool integrations
+
+
+# ── Memory ─────────────────────────────────────────────────────────────
+aiosqlite>=0.19.0
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+numpy>=1.26.0,<2.0  # deepfilternet 0.5.6 requires numpy<2.0 — do NOT upgrade
+
+
+# ── Speech — STT ───────────────────────────────────────────────────────
+# Groq Whisper API (primary): uses groq package above, no extra install.
+# FasterWhisper (local fallback):
+faster-whisper>=1.0.0
+
+
+# ── Speech — TTS ───────────────────────────────────────────────────────
+# Edge TTS (primary, cloud, free):
+edge-tts>=6.1.9
+ffmpeg-python>=0.2.0
+mutagen>=1.47.0  # server-side TTS audio duration measurement (fixes text/voice sync)
+# Kokoro ONNX (local fallback — optional, ~400 MB model download):
+kokoro-onnx>=0.5.0
+
+
+# ── Wake Word / Hotword ─────────────────────────────────────────────────
+# OpenWakeWord (optional — energy-based VAD works without it):
+openwakeword>=0.6.0
+
+
+# ── Audio I/O ───────────────────────────────────────────────────────────
+# sounddevice + soundfile — TTS playback (PRIMARY, cross-platform):
+sounddevice>=0.4.6
+soundfile>=0.12.1
+
+# pygame — TTS playback fallback:
+pygame>=2.5.0
+
+# PyAudio — microphone capture (hotword + STT input):
+PyAudio>=0.2.14
+# WebRTC VAD — strong background-noise-rejecting Voice Activity Detection
+# Upgrade from RMS-only detection. Install: pip install webrtcvad
+# Windows pre-built: pip install webrtcvad-wheels
+webrtcvad>=2.0.10
+# Linux:   sudo apt install portaudio19-dev  then pip install PyAudio
+# macOS:   brew install portaudio            then pip install PyAudio
+# Windows: pip install PyAudio  (pre-built wheel, no extra step)
+
+
+# ── Vision / OCR / Screen ───────────────────────────────────────────────
+mss>=9.0.1
+Pillow>=10.0.0
+pytesseract>=0.3.10
+# easyocr>=1.7.0               # optional — large install, requires torch
+
+
+# ── Desktop Automation ──────────────────────────────────────────────────
+pyautogui>=0.9.54
+pyperclip>=1.8.2
+pygetwindow>=0.0.9
+psutil>=5.9.0
+
+
+# ── Browser Automation ──────────────────────────────────────────────────
+playwright>=1.44.0
+# After install: python -m playwright install chromium
+
+
+# ── UI Framework ────────────────────────────────────────────────────────
+# UI Framework — PySide6 is the active HUD framework (interface/launch.py default).
+# PyQt6 is the legacy interface/ framework (kept for --legacy-ui mode).
+# If you only use server.py + browser HUD, you can comment both.
+# WARNING: Do NOT install both in the same venv — they conflict at the Qt binding level.
+
+# PyQt6 — legacy UI (interface/jarvis_ui.py, --legacy-ui mode):
+PyQt6>=6.7.0
+
+# PySide6 — active HUD (interface/launch.py default, interface/app.py):
+PySide6>=6.7.0
+
+# PySide6-WebEngine — in-app web view (only needed with --pyside-ui):
+# PySide6-WebEngine>=6.7.0
+
+# WebSocket client — needed for ws_client.py Mode B (Qt HUD ↔ server.py)
+websocket-client>=1.7.0
+
+
+# ── Deep Learning (optional — local model inference) ────────────────────
+torch
+torchvision>=0.17.0
+
+
+# ── Windows-only extras ─────────────────────────────────────────────────
+# Required for volume control and media transport (play/pause/next/prev).
+# Enabled — this project targets Windows.
+comtypes>=1.4.1
+pycaw>=20240210
+winsdk>=1.0.0b9
+win10toast>=0.9
+openpyxl>=3.1.0

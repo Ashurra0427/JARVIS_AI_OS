@@ -1,0 +1,2012 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>JARVIS Mobile OS</title>
+<style>
+  /* ── RESET & BASE (MOBILE FIRST) ── */
+  *, *::before, *::after { 
+    box-sizing: border-box; margin: 0; padding: 0; 
+    -webkit-tap-highlight-color: transparent;
+  }
+  :root {
+    --bg-deep:    #09111f;
+    --bg-panel:   #0d1b2e;
+    --bg-card:    #112039;
+    --bg-hover:   #162847;
+    --bg-input:   #0b1929;
+    --bg-glass:   rgba(13, 27, 46, 0.75);
+    --accent:     #00d4ff;
+    --accent2:    #7c3aed;
+    --accent3:    #10b981;
+    --accent4:    #f59e0b;
+    --accent5:    #ef4444;
+    --text:       #e2eaf6;
+    --text-dim:   #7a8fa8;
+    --text-muted: #4a5e75;
+    --border:     #1e3352;
+    --border-glow:#00d4ff33;
+    
+    /* Mobile Measurements */
+    --topbar-h:   calc(56px + env(safe-area-inset-top));
+    --botnav-h:   calc(64px + env(safe-area-inset-bottom));
+    --radius:     16px;
+    --font:       -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono:  'Cascadia Code', 'Menlo', 'Consolas', monospace;
+  }
+  
+  html, body { 
+    height: 100dvh; 
+    width: 100vw;
+    overflow: hidden; 
+    font-family: var(--font); 
+    font-size: 14px; 
+    background: var(--bg-deep); 
+    color: var(--text);
+    overscroll-behavior-y: none;
+  }
+
+  /* ── LAYOUT SHELL ── */
+  #app { 
+    display: flex; flex-direction: column; 
+    height: 100dvh; width: 100vw; 
+    position: relative;
+  }
+
+  /* ── TOP APP BAR ── */
+  #header { 
+    height: var(--topbar-h); 
+    padding: env(safe-area-inset-top) 16px 0; 
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--bg-glass); 
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--border); 
+    position: absolute; top: 0; left: 0; right: 0; z-index: 100;
+  }
+  .logo { 
+    display: flex; align-items: center; gap: 8px; 
+    font-weight: 700; font-size: 16px; letter-spacing: 0.5px; 
+    color: var(--accent); flex-shrink: 0;
+  }
+  .logo-diamond { 
+    width: 20px; height: 20px; 
+    background: linear-gradient(135deg, var(--accent), var(--accent2)); 
+    clip-path: polygon(50% 0%,100% 50%,50% 100%,0% 50%); 
+  }
+  .hdr-actions { display: flex; align-items: center; gap: 12px; }
+  .status-dot { 
+    width: 8px; height: 8px; border-radius: 50%; 
+    background: var(--accent3); box-shadow: 0 0 8px var(--accent3); 
+  }
+  .hdr-btn { 
+    width: 36px; height: 36px; border-radius: 50%; 
+    background: var(--bg-card); border: 1px solid var(--border); 
+    color: var(--text); display: flex; align-items: center; justify-content: center; 
+    font-size: 16px;
+  }
+  /* Desktop specific elements to hide */
+  .logo-ver, #header-search, .hdr-btn[title="Minimize"], #sidebar, #right-panel, .ws-tabs { display: none !important; }
+
+  /* ── MAIN AREA ── */
+  #main { 
+    flex: 1; 
+    margin-top: var(--topbar-h);
+    margin-bottom: var(--botnav-h);
+    overflow: hidden; 
+    display: flex; flex-direction: column; 
+    position: relative;
+  }
+
+  /* ── SCROLLBAR (Minimal for mobile) ── */
+  ::-webkit-scrollbar { width: 3px; height: 3px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* ── BOTTOM NAVIGATION ── */
+  #bottom-nav {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    height: var(--botnav-h);
+    padding: 8px 12px env(safe-area-inset-bottom);
+    background: var(--bg-glass);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; overflow-x: auto;
+    scroll-snap-type: x mandatory; gap: 4px; z-index: 100;
+  }
+  .nav-item {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 4px; min-width: 64px; height: 100%; flex: 1 0 auto;
+    color: var(--text-muted); scroll-snap-align: center;
+    transition: all 0.2s; padding: 4px; border-radius: 12px;
+  }
+  .nav-item.active { color: var(--accent); }
+  .nav-item.active .nav-icon { background: var(--accent2); color: #fff; transform: scale(1.1); }
+  .nav-icon { 
+    font-size: 20px; width: 32px; height: 32px; display: flex; 
+    align-items: center; justify-content: center; border-radius: 10px;
+    transition: all 0.2s;
+  }
+  .nav-label { font-size: 10px; font-weight: 600; }
+  .nav-badge { display: none; } /* Hidden in mobile nav to save space */
+
+  /* ── WORKSPACES ── */
+  .workspace { display: none; flex: 1; overflow-y: auto; flex-direction: column; overscroll-behavior: contain; }
+  .workspace.active { display: flex; animation: fade-in 0.25s ease-out; }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* ── CHAT WORKSPACE (Crown Jewel) ── */
+  #ws-chat { flex-direction: column; }
+  .chat-messages { 
+    flex: 1; overflow-y: auto; padding: 16px 12px; 
+    display: flex; flex-direction: column; gap: 16px; 
+  }
+  .msg { display: flex; gap: 12px; max-width: 100%; align-items: flex-end; }
+  .msg.user { flex-direction: row-reverse; }
+  .msg-avatar { 
+    width: 32px; height: 32px; border-radius: 12px; flex-shrink: 0; 
+    display: flex; align-items: center; justify-content: center; font-size: 16px; 
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+  }
+  .msg-avatar.jarvis { background: linear-gradient(135deg, var(--accent2), var(--accent)); }
+  .msg-avatar.user { background: linear-gradient(135deg, var(--accent3), #059669); }
+  .msg-body { max-width: 85%; display: flex; flex-direction: column; }
+  .msg.user .msg-body { align-items: flex-end; }
+  .msg-header { display: none; } /* Hide labels for native feel */
+  .msg-bubble { 
+    padding: 12px 16px; border-radius: 20px; font-size: 15px; line-height: 1.5; 
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1); word-wrap: break-word;
+  }
+  .msg.jarvis .msg-bubble { 
+    background: var(--bg-card); border: 1px solid var(--border); 
+    border-bottom-left-radius: 4px; color: var(--text);
+  }
+  .msg.user .msg-bubble { 
+    background: linear-gradient(135deg, var(--accent2), #5b21b6); 
+    border-bottom-right-radius: 4px; color: #fff;
+  }
+  .msg-time { font-size: 10px; color: var(--text-muted); margin-top: 4px; padding: 0 4px; }
+
+  /* Floating Composer */
+  .chat-input-area { 
+    padding: 12px 16px; background: var(--bg-deep); 
+    border-top: 1px solid var(--border);
+    position: sticky; bottom: 0;
+  }
+  .chat-input-row { display: flex; gap: 10px; align-items: flex-end; }
+  .chat-input-wrap { 
+    flex: 1; background: var(--bg-card); border: 1px solid var(--border); 
+    border-radius: 24px; padding: 8px 16px; display: flex; align-items: center; gap: 8px; 
+  }
+  #chat-input { 
+    flex: 1; background: transparent; border: none; outline: none; 
+    color: var(--text); font-size: 15px; resize: none; 
+    max-height: 120px; min-height: 24px; line-height: 1.4; padding: 4px 0;
+  }
+  .input-icon-btn { 
+    background: transparent; border: none; color: var(--text-muted); 
+    font-size: 20px; padding: 4px;
+  }
+  .send-btn { 
+    width: 44px; height: 44px; border-radius: 50%; 
+    background: var(--accent); border: none; color: var(--bg-deep);
+    display: flex; align-items: center; justify-content: center; font-size: 18px; 
+    box-shadow: 0 4px 12px var(--border-glow);
+  }
+  .chat-meta-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+  .voice-mic { 
+    width: 40px; height: 40px; border-radius: 50%; background: var(--bg-panel); 
+    border: 1px solid var(--border); color: var(--text); font-size: 18px; 
+    display: flex; align-items: center; justify-content: center;
+  }
+  .voice-mic.listening { background: var(--accent5); border-color: var(--accent5); animation: pulse 1s infinite; }
+  .stt-status { font-size: 11px; margin-left: 8px; }
+  .stt-status.ok { color: var(--accent3); } .stt-status.err { color: var(--accent5); }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.4); } 50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } }
+  
+  /* Badges */
+  .provider-tags { display: none; } /* Move to settings/system for mobile */
+  .model-pill { 
+    font-size: 11px; padding: 6px 12px; background: var(--bg-card); 
+    border-radius: 16px; color: var(--text-dim); border: 1px solid var(--border);
+  }
+
+  /* ── AGENTS WORKSPACE ── */
+  .agents-header { padding: 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg-deep); z-index: 10; }
+  .agents-header h2 { font-size: 20px; font-weight: 700; margin-bottom: 12px; }
+  .agent-filter-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x mandatory; }
+  .filter-btn { 
+    font-size: 13px; padding: 8px 16px; background: var(--bg-card); 
+    border: 1px solid var(--border); border-radius: 20px; color: var(--text-dim); 
+    white-space: nowrap; scroll-snap-align: start;
+  }
+  .filter-btn.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  
+  .agents-grid { display: flex; flex-direction: column; gap: 16px; padding: 16px; }
+  .agent-card { 
+    background: var(--bg-card); border: 1px solid var(--border); 
+    border-radius: 20px; padding: 20px; position: relative; overflow: hidden;
+  }
+  .agent-card::before { content: ''; position: absolute; top: 0; left: 0; bottom: 0; width: 4px; }
+  .agent-card.planner::before { background: linear-gradient(180deg, var(--accent), var(--accent2)); }
+  .agent-card.coder::before { background: linear-gradient(180deg, var(--accent3), #059669); }
+  .agent-card.browser-a::before { background: linear-gradient(180deg, #3b82f6, #1d4ed8); }
+  .agent-card.memory-a::before { background: linear-gradient(180deg, #ec4899, #be185d); }
+  .agent-card.voice-a::before { background: linear-gradient(180deg, var(--accent4), #d97706); }
+  .agent-card.automation-a::before { background: linear-gradient(180deg, var(--accent2), #5b21b6); }
+  .agent-card.file-a::before { background: linear-gradient(180deg, #14b8a6, #0d9488); }
+  .agent-card.api-a::before { background: linear-gradient(180deg, #f97316, #ea580c); }
+  
+  .agent-card-header { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+  .agent-icon { 
+    width: 48px; height: 48px; border-radius: 14px; 
+    display: flex; align-items: center; justify-content: center; font-size: 24px; 
+  }
+  .agent-info { flex: 1; }
+  .agent-name { font-weight: 700; font-size: 16px; margin-bottom: 4px; }
+  .agent-role { font-size: 12px; color: var(--text-muted); }
+  .agent-status-badge { font-size: 10px; padding: 4px 8px; border-radius: 12px; }
+  .agent-status-badge.online { background: rgba(16, 185, 129, 0.2); color: var(--accent3); }
+  .agent-status-badge.idle { background: rgba(245, 158, 11, 0.2); color: var(--accent4); }
+  .agent-status-badge.busy { background: rgba(239, 68, 68, 0.2); color: var(--accent5); }
+  
+  .agent-desc { font-size: 13px; color: var(--text-dim); line-height: 1.5; margin-bottom: 16px; }
+  .agent-caps { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .agent-cap { font-size: 11px; padding: 4px 8px; background: var(--bg-deep); border-radius: 8px; color: var(--text-muted); }
+  .agent-actions { display: flex; flex-direction: column; gap: 8px; }
+  .agent-btn { 
+    padding: 12px; background: var(--bg-panel); border: 1px solid var(--border); 
+    border-radius: 12px; font-size: 14px; font-weight: 600; color: var(--text); text-align: center;
+  }
+  .agent-btn.primary { background: var(--accent2); border: none; color: #fff; }
+
+  /* ── CODER WORKSPACE (GitHub Mobile feel) ── */
+  .coder-layout { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+  .coder-editor-area { flex: 1; display: flex; flex-direction: column; position: relative; }
+  .editor-tabs { 
+    display: flex; background: var(--bg-panel); padding: 8px; gap: 8px; 
+    overflow-x: auto; border-bottom: 1px solid var(--border); scroll-snap-type: x mandatory;
+  }
+  .editor-tab { 
+    padding: 8px 16px; background: var(--bg-card); border-radius: 16px; 
+    font-size: 13px; color: var(--text-dim); white-space: nowrap; scroll-snap-align: start;
+    display: flex; align-items: center; gap: 8px; border: 1px solid transparent;
+  }
+  .editor-tab.active { color: var(--accent); border-color: var(--accent); background: var(--bg-deep); }
+  
+  .code-area-wrap { flex: 1; overflow: auto; background: var(--bg-deep); }
+  .code-textarea { 
+    width: 100%; min-height: 100%; background: transparent; border: none; outline: none; 
+    color: #c9d1d9; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; 
+    padding: 16px; padding-left: 48px; /* Room for lines */
+    white-space: pre; overflow-wrap: normal; overflow-x: auto;
+  }
+  .code-line-nums { 
+    position: absolute; left: 0; top: 0; bottom: 0; width: 40px; 
+    background: var(--bg-panel); padding: 16px 0; text-align: right; padding-right: 8px;
+    color: var(--text-muted); font-family: var(--font-mono); font-size: 13px; line-height: 1.6; 
+    border-right: 1px solid var(--border); overflow: hidden; pointer-events: none;
+  }
+  
+  .ai-assist-bar { 
+    padding: 12px; background: var(--bg-card); border-top: 1px solid var(--border); 
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .ai-assist-actions { display: flex; gap: 8px; overflow-x: auto; }
+  .ai-action-btn { 
+    padding: 8px 16px; background: var(--bg-panel); border: 1px solid var(--border); 
+    border-radius: 16px; font-size: 12px; color: var(--text); white-space: nowrap;
+  }
+  .ai-prompt-row { display: flex; gap: 8px; }
+  .ai-input-mini { 
+    flex: 1; background: var(--bg-input); border: 1px solid var(--border); 
+    border-radius: 12px; padding: 10px 16px; color: var(--text); font-size: 14px; 
+  }
+  .ai-run-btn { 
+    padding: 0 20px; background: var(--accent); border: none; 
+    border-radius: 12px; color: var(--bg-deep); font-weight: 700; 
+  }
+  .explorer-trigger { 
+    position: absolute; bottom: 120px; right: 16px; 
+    width: 48px; height: 48px; border-radius: 24px; background: var(--accent2); 
+    color: #fff; font-size: 20px; display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 10;
+  }
+
+  /* ── BROWSER WORKSPACE ── */
+  .browser-bar { 
+    padding: 12px; border-bottom: 1px solid var(--border); background: var(--bg-card); 
+    display: flex; gap: 8px; align-items: center;
+  }
+  .browser-url { 
+    flex: 1; background: var(--bg-input); border: 1px solid var(--border); 
+    border-radius: 16px; padding: 10px 16px; color: var(--text); font-size: 14px; 
+  }
+  .browser-nav-btn { 
+    width: 36px; height: 36px; background: var(--bg-panel); border-radius: 10px; 
+    display: flex; align-items: center; justify-content: center; border: 1px solid var(--border);
+  }
+  .browser-viewport { flex: 1; background: var(--bg-deep); display: flex; align-items: center; justify-content: center; padding: 24px;}
+  .browser-placeholder { text-align: center; }
+  .browser-placeholder .big-icon { font-size: 64px; margin-bottom: 16px; }
+
+  /* ── MEMORY & TASKS & SYSTEM (Shared Card Style) ── */
+  .system-layout, .memory-layout, .tasks-layout, .auto-layout { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+  
+  .mem-card, .kanban-col, .auto-workflow, .sys-card { 
+    background: var(--bg-card); border: 1px solid var(--border); 
+    border-radius: 20px; padding: 16px;
+  }
+  .mem-card-header, .kanban-col-header, .auto-wf-header { 
+    display: flex; align-items: center; justify-content: space-between; 
+    margin-bottom: 16px; font-weight: 700; font-size: 16px;
+  }
+  .mem-entry { 
+    padding: 12px; background: var(--bg-input); border-radius: 12px; 
+    margin-bottom: 8px; font-size: 13px; border-left: 3px solid var(--accent2);
+  }
+  .mem-entry-key { font-size: 11px; color: var(--accent); margin-bottom: 4px; font-weight: 700; text-transform: uppercase;}
+  
+  /* Task Items */
+  .kanban-items { display: flex; flex-direction: column; gap: 12px; }
+  .kanban-item { 
+    background: var(--bg-panel); border: 1px solid var(--border); 
+    border-radius: 12px; padding: 16px; 
+  }
+  .kanban-item-title { font-size: 14px; margin-bottom: 8px; font-weight: 600; }
+  .kanban-item-meta { display: flex; justify-content: space-between; align-items: center;}
+  .kanban-agent-tag { font-size: 11px; padding: 4px 8px; border-radius: 8px; background: var(--accent2); color: #fff; }
+  
+  /* Automation Steps */
+  .auto-steps { display: flex; flex-direction: column; gap: 8px; }
+  .auto-step { 
+    background: var(--bg-panel); border-radius: 12px; padding: 12px 16px; 
+    font-size: 13px; display: flex; align-items: center; gap: 12px; border: 1px solid var(--border);
+  }
+  .auto-arrow { display: none; } /* Stack vertically instead */
+
+  /* ── SYSTEM SCREEN (Moved from Right Panel) ── */
+  .sys-meters { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .sys-meter { 
+    background: var(--bg-panel); padding: 16px 8px; border-radius: 16px; 
+    text-align: center; border: 1px solid var(--border);
+  }
+  .meter-ring { width: 64px; height: 64px; margin: 0 auto 8px; }
+  .meter-ring circle { fill: none; stroke-linecap: round; }
+  .ring-bg { stroke: var(--bg-input); stroke-width: 6; }
+  .ring-fill { stroke-width: 6; stroke-dasharray: 100; transition: stroke-dashoffset .5s; }
+  .cpu-ring { stroke: var(--accent); } .ram-ring { stroke: var(--accent2); } .gpu-ring { stroke: var(--accent3); }
+  .sys-meter-val { font-size: 16px; font-weight: 700; margin-top: -45px; margin-bottom: 25px; }
+  .sys-meter-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;}
+  
+  .active-agent-row { 
+    display: flex; align-items: center; gap: 12px; padding: 12px 0; 
+    border-bottom: 1px solid var(--border);
+  }
+  .aa-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .aa-name { font-size: 14px; flex: 1; font-weight: 600; }
+  .aa-status { font-size: 12px; color: var(--text-muted); text-transform: uppercase; }
+
+  /* ── SETTINGS WORKSPACE (iOS Style) ── */
+  .settings-layout { padding: 16px; padding-bottom: 40px; }
+  .settings-group { margin-bottom: 24px; }
+  .settings-group-title { font-size: 13px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; padding-left: 16px; }
+  .settings-card { background: var(--bg-card); border-radius: 20px; overflow: hidden; border: 1px solid var(--border); }
+  .settings-row { 
+    display: flex; align-items: center; justify-content: space-between; 
+    padding: 16px; border-bottom: 1px solid var(--border); gap: 16px;
+  }
+  .settings-row:last-child { border-bottom: none; }
+  .settings-row-info { flex: 1; }
+  .settings-row-label { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .settings-row-desc { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
+  
+  /* Native-style Toggles */
+  .toggle { 
+    width: 50px; height: 30px; background: var(--bg-input); 
+    border-radius: 15px; position: relative; transition: background .3s; 
+  }
+  .toggle.on { background: var(--accent3); }
+  .toggle::after { 
+    content: ''; position: absolute; width: 26px; height: 26px; 
+    background: #fff; border-radius: 50%; top: 2px; left: 2px; 
+    transition: transform .3s; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }
+  .toggle.on::after { transform: translateX(20px); }
+  
+  .settings-select, .settings-input, .api-key-input { 
+    background: transparent; border: none; color: var(--text); 
+    font-size: 15px; text-align: right; outline: none; width: 100%;
+  }
+  .api-key-row { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+  .api-key-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  
+  /* Hide desktop spage logic, show everything sequentially or use bottom sheets */
+  .spage { display: block !important; }
+
+  /* ── GLOBAL BOTTOM SHEETS (Replaces Modals) ── */
+  .sheet-overlay { 
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; 
+    opacity: 0; pointer-events: none; transition: opacity 0.3s;
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  }
+  .sheet-overlay.open { opacity: 1; pointer-events: all; }
+  .bottom-sheet { 
+    position: absolute; bottom: 0; left: 0; right: 0; 
+    background: var(--bg-panel); border-radius: 24px 24px 0 0; 
+    padding: 24px 16px calc(24px + env(safe-area-inset-bottom)); 
+    max-height: 85vh; overflow-y: auto;
+    transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1);
+    box-shadow: 0 -10px 30px rgba(0,0,0,0.5); border-top: 1px solid var(--border);
+  }
+  .sheet-overlay.open .bottom-sheet { transform: translateY(0); }
+  .sheet-drag-handle { 
+    width: 40px; height: 5px; background: var(--text-muted); 
+    border-radius: 3px; margin: 0 auto 20px; opacity: 0.5;
+  }
+  .sheet-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .sheet-title { font-size: 18px; font-weight: 700; }
+  .sheet-close { background: var(--bg-input); border: none; width: 32px; height: 32px; border-radius: 16px; color: var(--text); font-size: 16px; }
+
+  /* ── TOAST ── */
+  #toast { position: fixed; top: calc(var(--topbar-h) + 16px); left: 16px; right: 16px; z-index: 2000; display: flex; flex-direction: column; align-items: center;}
+  .toast-item { 
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; 
+    padding: 12px 20px; margin-bottom: 8px; font-size: 14px; display: flex; align-items: center; gap: 12px; 
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5); animation: slideDown .3s ease; width: fit-content; max-width: 100%;
+  }
+  @keyframes slideDown { from { transform: translateY(-40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  /* Typing */
+  .typing-dots span { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin: 0 2px; animation: blink 1.4s infinite; }
+  .typing-dots span:nth-child(2) { animation-delay: .2s; } .typing-dots span:nth-child(3) { animation-delay: .4s; }
+</style>
+</head>
+<body>
+<div id="app">
+  
+  <header id="header">
+    <div class="logo"><div class="logo-diamond"></div> JARVIS</div>
+    <div class="hdr-actions">
+      <span id="status-bar-text" style="font-size:10px;color:var(--text-muted);display:none"></span>
+      <span id="backend-status-badge" class="stt-status err">● OFFLINE</span>
+      <button class="hdr-btn" onclick="switchWS('settings')">⚙️</button>
+    </div>
+  </header>
+
+  <main id="main">
+    
+    <div class="workspace active" id="ws-chat">
+      <div class="chat-messages" id="chat-messages">
+        <div class="msg jarvis">
+          <div class="msg-avatar jarvis">🤖</div>
+          <div class="msg-body">
+            <div class="msg-bubble">✅ Connected to JARVIS server.<br>All systems online. How can I assist you?</div>
+            <div class="msg-time">Now</div>
+          </div>
+        </div>
+      </div>
+      <div class="chat-input-area">
+        <div class="chat-meta-row" style="margin-top:0; margin-bottom:12px;">
+          <span class="model-pill" id="active-provider-pill" onclick="openSheet('model-sheet')">JARVIS ▾</span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <select id="active-agent-select" onchange="jarvisCurrentAgent=this.value" style="background:transparent;border:none;color:var(--text-muted);font-size:11px;outline:none">
+              <option value="oracle">Oracle</option>
+              <option value="athena">Athena</option>
+              <option value="vision_eng">Coder</option>
+              <option value="herald">Browser</option>
+              <option value="ashura">Memory</option>
+              <option value="friday">Auto</option>
+            </select>
+            <span class="stt-status" id="stt-status-badge">STT Ready</span>
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <button class="voice-mic" id="mic-btn" onclick="startListening()">🎙️</button>
+          <div class="chat-input-wrap">
+            <textarea id="chat-input" placeholder="Message JARVIS..." rows="1" onkeydown="handleChatKey(event)" oninput="autoGrow(this)"></textarea>
+          </div>
+          <button class="send-btn" onclick="sendMessage()">➤</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace" id="ws-agents">
+      <div class="agents-header">
+        <h2>Agents</h2>
+        <div class="agent-filter-row">
+          <button class="filter-btn active" onclick="filterAgents('all',this)">All</button>
+          <button class="filter-btn" onclick="filterAgents('online',this)">Online</button>
+          <button class="filter-btn" onclick="filterAgents('busy',this)">Busy</button>
+        </div>
+      </div>
+      <div class="agents-grid">
+        <div class="agent-card planner" id="agent-oracle" data-status="online">
+          <div class="agent-card-header">
+            <div class="agent-icon" style="background:rgba(0, 212, 255, 0.15)">📅</div>
+            <div class="agent-info">
+              <div class="agent-name">Oracle (Planner)</div>
+              <div class="agent-role">Task Orchestration</div>
+            </div>
+            <span class="agent-status-badge online">● Online</span>
+          </div>
+          <div class="agent-desc">Routes and coordinates tasks across all agents. Decomposes complex goals.</div>
+          <div class="agent-current-task" style="font-size:11px;color:var(--text-muted);margin-bottom:12px;min-height:14px"></div>
+          <div class="agent-actions">
+            <button class="agent-btn primary" onclick="openAgentChat('oracle')">Chat</button>
+            <button class="agent-btn" onclick="showAgentLog('Oracle')">View Logs</button>
+          </div>
+        </div>
+        <div class="agent-card coder" id="agent-coder" data-status="online">
+          <div class="agent-card-header">
+            <div class="agent-icon" style="background:rgba(16, 185, 129, 0.15)">💻</div>
+            <div class="agent-info">
+              <div class="agent-name">Vision Eng (Coder)</div>
+              <div class="agent-role">Code Generation</div>
+            </div>
+            <span class="agent-status-badge online">● Online</span>
+          </div>
+          <div class="agent-desc">Generates, analyzes, and debugs code. Operates VS Code-like workspace.</div>
+          <div class="agent-current-task" style="font-size:11px;color:var(--text-muted);margin-bottom:12px;min-height:14px"></div>
+          <div class="agent-actions">
+            <button class="agent-btn primary" onclick="switchWS('coder')">Open IDE</button>
+            <button class="agent-btn" onclick="showAgentLog('Coder')">View Logs</button>
+          </div>
+        </div>
+        <div class="agent-card browser-a" id="agent-browser" data-status="online">
+          <div class="agent-card-header">
+            <div class="agent-icon" style="background:rgba(59, 130, 246, 0.15)">🌐</div>
+            <div class="agent-info">
+              <div class="agent-name">Herald (Browser)</div>
+              <div class="agent-role">Web Navigation</div>
+            </div>
+            <span class="agent-status-badge online">● Online</span>
+          </div>
+          <div class="agent-desc">Controls Playwright sessions. Navigates, clicks, and extracts content.</div>
+          <div class="agent-current-task" style="font-size:11px;color:var(--text-muted);margin-bottom:12px;min-height:14px"></div>
+          <div class="agent-actions">
+            <button class="agent-btn primary" onclick="switchWS('browser')">Open Browser</button>
+            <button class="agent-btn" onclick="showAgentLog('Herald')">View Logs</button>
+          </div>
+        </div>
+        <div class="agent-card memory-a" id="agent-memory" data-status="online">
+          <div class="agent-card-header">
+            <div class="agent-icon" style="background:rgba(236, 72, 153, 0.15)">🧠</div>
+            <div class="agent-info">
+              <div class="agent-name">Ashura (Memory)</div>
+              <div class="agent-role">Context Store</div>
+            </div>
+            <span class="agent-status-badge online">● Online</span>
+          </div>
+          <div class="agent-desc">Manages memory, vector embeddings and knowledge graph.</div>
+          <div class="agent-current-task" style="font-size:11px;color:var(--text-muted);margin-bottom:12px;min-height:14px"></div>
+          <div class="agent-actions">
+            <button class="agent-btn primary" onclick="switchWS('memory')">Open Memory</button>
+            <button class="agent-btn" onclick="showAgentLog('Ashura')">View Logs</button>
+          </div>
+        </div>
+        <div class="agent-card automation-a" id="agent-automation" data-status="online">
+          <div class="agent-card-header">
+            <div class="agent-icon" style="background:rgba(124, 58, 237, 0.15)">⚡</div>
+            <div class="agent-info">
+              <div class="agent-name">Friday (Automation)</div>
+              <div class="agent-role">Workflow Execution</div>
+            </div>
+            <span class="agent-status-badge online">● Online</span>
+          </div>
+          <div class="agent-desc">Runs automations, desktop control, and scheduled workflows via EventBus.</div>
+          <div class="agent-current-task" style="font-size:11px;color:var(--text-muted);margin-bottom:12px;min-height:14px"></div>
+          <div class="agent-actions">
+            <button class="agent-btn primary" onclick="switchWS('automation')">Automations</button>
+            <button class="agent-btn" onclick="showAgentLog('Friday')">View Logs</button>
+          </div>
+        </div>
+        <div class="agent-card" id="agent-coordinator" data-status="online" style="border-color:var(--accent2)">
+          <div class="agent-card-header">
+            <div class="agent-icon" style="background:rgba(124, 58, 237, 0.15)">🎯</div>
+            <div class="agent-info">
+              <div class="agent-name">Coordinator</div>
+              <div class="agent-role">Action Routing</div>
+            </div>
+            <span class="agent-status-badge online">● Online</span>
+          </div>
+          <div class="agent-desc">Routes tool invocations and action requests across the system.</div>
+          <div class="agent-current-task" style="font-size:11px;color:var(--text-muted);margin-bottom:12px;min-height:14px"></div>
+          <div class="agent-actions">
+            <button class="agent-btn primary" onclick="openAgentChat('coordinator')">Chat</button>
+            <button class="agent-btn" onclick="showAgentLog('Coordinator')">View Logs</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace" id="ws-coder">
+      <div class="coder-layout">
+        <div class="editor-tabs" id="editor-tabs">
+          <div class="editor-tab active" id="etab-welcome">🏠 welcome.py</div>
+        </div>
+        <div class="code-area-wrap">
+          <div class="code-line-nums" id="line-nums">1<br>2<br>3<br>4</div>
+          <textarea class="code-textarea" id="code-editor" spellcheck="false" onscroll="syncScroll(this)" oninput="updateLineNums(this)">
+"""
+JARVIS Coder — Mobile
+Tap explorer to open files.
+"""
+def hello_world():
+    pass
+          </textarea>
+        </div>
+        <button class="explorer-trigger" onclick="openSheet('explorer-sheet')">📁</button>
+        <div class="ai-assist-bar">
+          <div class="ai-assist-actions">
+            <button class="ai-action-btn" onclick="aiAction('analyze')">🔍 Analyze</button>
+            <button class="ai-action-btn" onclick="aiAction('rewrite')">🔄 Rewrite</button>
+            <button class="ai-action-btn" onclick="openSheet('ai-output-sheet')">🤖 Output</button>
+          </div>
+          <div class="ai-prompt-row">
+            <input class="ai-input-mini" type="text" id="ai-code-prompt" placeholder="Generate code..." />
+            <button class="ai-run-btn" onclick="runAICode()">Run</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace" id="ws-browser">
+      <div class="browser-bar">
+        <button class="browser-nav-btn" onclick="showToast('Back')">◀</button>
+        <input class="browser-url" type="text" id="browser-url" placeholder="Enter URL..." />
+        <button class="browser-nav-btn" style="background:var(--accent); color:#000; border:none;" onclick="browserGo()">Go</button>
+      </div>
+      <div class="browser-viewport">
+        <div class="browser-placeholder">
+          <div class="big-icon">🌐</div>
+          <h3 style="margin-bottom:12px;">Browser Agent Ready</h3>
+          <p style="color:var(--text-muted); font-size:14px; line-height:1.5;">Enter URL above or ask JARVIS.</p>
+          <button class="agent-btn primary" style="margin-top:24px; width:100%;" onclick="jarvisBrowse()">🤖 Ask JARVIS</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace" id="ws-memory">
+      <div class="agents-header"><h2>Memory</h2></div>
+      <div class="memory-layout">
+        <div class="mem-card">
+          <div class="mem-card-header">🔍 Recall</div>
+          <div style="display:flex;gap:8px;margin-bottom:16px">
+            <input class="ai-input-mini" type="text" id="memory-search" placeholder="Search memory…" style="flex:1"/>
+            <button class="ai-run-btn" onclick="memoryRecall()">Search</button>
+          </div>
+          <div id="memory-results-list">
+            <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:24px 0">Connect backend to load memories</div>
+          </div>
+        </div>
+        <div class="mem-card">
+          <div class="mem-card-header">💾 Store</div>
+          <input class="ai-input-mini" type="text" id="memory-key" placeholder="Key (e.g. user.pref.lang)" style="display:block;width:100%;margin-bottom:8px"/>
+          <input class="ai-input-mini" type="text" id="memory-val" placeholder="Value" style="display:block;width:100%;margin-bottom:12px"/>
+          <button class="agent-btn primary" style="width:100%" onclick="memoryStore()">Store</button>
+        </div>
+        <div class="mem-card">
+          <div class="mem-card-header">📊 Stats</div>
+          <div class="active-agent-row"><span class="aa-name">Episodes</span><span class="aa-status" id="memory-episode-count" style="color:var(--text)">—</span></div>
+          <div class="active-agent-row" style="border:none"><span class="aa-name">Semantic keys</span><span class="aa-status" id="memory-semantic-count" style="color:var(--text)">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace" id="ws-tasks">
+      <div class="agents-header"><h2>Task Board</h2></div>
+      <div class="tasks-layout">
+        <div class="mem-card">
+          <div style="display:flex;gap:8px;margin-bottom:0">
+            <input class="ai-input-mini" type="text" id="task-input" placeholder="Describe a task for JARVIS…" style="flex:1"/>
+            <button class="ai-run-btn" onclick="createTask()">Plan</button>
+          </div>
+        </div>
+        <div class="kanban-col">
+          <div class="kanban-col-header">Inbox <span id="tasks-inbox-count">0</span></div>
+          <div class="kanban-items" id="tasks-inbox">
+            <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:24px 0">No tasks yet</div>
+          </div>
+        </div>
+        <div class="kanban-col">
+          <div class="kanban-col-header">In Progress</div>
+          <div class="kanban-items" id="tasks-inprogress"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace" id="ws-automation">
+      <div class="agents-header"><h2>Automations</h2></div>
+      <div class="auto-layout">
+        <div class="auto-workflow">
+          <div class="auto-wf-header">Daily Report <span style="color:var(--accent3); font-size:12px;">● Active</span></div>
+          <div class="auto-steps">
+            <div class="auto-step">⏰ Trigger: 09:00</div>
+            <div class="auto-step">🧠 Load Context -> 🌐 Fetch News</div>
+            <div class="auto-step">🤖 Summarize -> 🔔 Notify</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace" id="ws-system">
+      <div class="agents-header"><h2>System Status</h2></div>
+      <div class="system-layout">
+        <div class="sys-meters">
+          <div class="sys-meter">
+            <svg class="meter-ring" viewBox="0 0 44 44">
+              <circle class="ring-bg" cx="22" cy="22" r="16"/>
+              <circle class="ring-fill cpu-ring" id="cpu-ring-fill" cx="22" cy="22" r="16" stroke-dasharray="100.53" stroke-dashoffset="97" transform="rotate(-90 22 22)"/>
+            </svg>
+            <div class="sys-meter-val" id="metric-cpu">—</div>
+            <div class="sys-meter-label">CPU</div>
+          </div>
+          <div class="sys-meter">
+            <svg class="meter-ring" viewBox="0 0 44 44">
+              <circle class="ring-bg" cx="22" cy="22" r="16"/>
+              <circle class="ring-fill ram-ring" id="ram-ring-fill" cx="22" cy="22" r="16" stroke-dasharray="100.53" stroke-dashoffset="26" transform="rotate(-90 22 22)"/>
+            </svg>
+            <div class="sys-meter-val" id="metric-ram">—</div>
+            <div class="sys-meter-label">RAM</div>
+          </div>
+          <div class="sys-meter">
+            <svg class="meter-ring" viewBox="0 0 44 44">
+              <circle class="ring-bg" cx="22" cy="22" r="16"/>
+              <circle class="ring-fill gpu-ring" id="disk-ring-fill" cx="22" cy="22" r="16" stroke-dasharray="100.53" stroke-dashoffset="100" transform="rotate(-90 22 22)"/>
+            </svg>
+            <div class="sys-meter-val" id="metric-disk">—</div>
+            <div class="sys-meter-label">Disk</div>
+          </div>
+        </div>
+
+        <div class="sys-card">
+          <div class="mem-card-header">System Info</div>
+          <div class="active-agent-row"><span class="aa-name">OS</span><span class="aa-status" id="diag-os" style="color:var(--text)">—</span></div>
+          <div class="active-agent-row"><span class="aa-name">CPU</span><span class="aa-status" id="diag-cpu-name" style="color:var(--text);font-size:11px;max-width:160px;text-align:right">—</span></div>
+          <div class="active-agent-row"><span class="aa-name">Cores</span><span class="aa-status" id="diag-cpu-count" style="color:var(--text)">—</span></div>
+          <div class="active-agent-row"><span class="aa-name">RAM Used</span><span class="aa-status" id="metric-ram-used" style="color:var(--text)">—</span></div>
+          <div class="active-agent-row"><span class="aa-name">Disk Used</span><span class="aa-status" id="metric-disk-used" style="color:var(--text)">—</span></div>
+          <div class="active-agent-row"><span class="aa-name">Net ↑</span><span class="aa-status" id="metric-net-up" style="color:var(--accent3)">—</span></div>
+          <div class="active-agent-row"><span class="aa-name">Net ↓</span><span class="aa-status" id="metric-net-dn" style="color:var(--accent)">—</span></div>
+          <div class="active-agent-row"><span class="aa-name">Temp</span><span class="aa-status" id="metric-temp" style="color:var(--accent4)">—</span></div>
+          <div class="active-agent-row" style="border:none"><span class="aa-name">Battery</span><span class="aa-status" id="metric-bat" style="color:var(--accent3)">—</span></div>
+        </div>
+
+        <div class="sys-card">
+          <div class="mem-card-header">Providers</div>
+          <div class="active-agent-row"><span class="aa-name">Groq</span><span id="provider-groq" style="font-size:12px;color:var(--text-muted)">checking…</span></div>
+          <div class="active-agent-row"><span class="aa-name">Gemini</span><span id="provider-gemini" style="font-size:12px;color:var(--text-muted)">checking…</span></div>
+          <div class="active-agent-row" style="border:none"><span class="aa-name">Ollama</span><span id="provider-ollama" style="font-size:12px;color:var(--text-muted)">checking…</span></div>
+        </div>
+
+        <div class="sys-card">
+          <div class="mem-card-header">Active Agents</div>
+          <div class="active-agent-row" id="sys-agent-oracle"><div class="aa-dot" style="background:var(--accent)"></div><span class="aa-name">Oracle</span><span class="aa-status">idle</span></div>
+          <div class="active-agent-row" id="sys-agent-athena"><div class="aa-dot" style="background:var(--accent3)"></div><span class="aa-name">Athena</span><span class="aa-status">idle</span></div>
+          <div class="active-agent-row" id="sys-agent-vision_eng"><div class="aa-dot" style="background:var(--accent3)"></div><span class="aa-name">Vision Eng</span><span class="aa-status">idle</span></div>
+          <div class="active-agent-row" id="sys-agent-herald"><div class="aa-dot" style="background:var(--accent3)"></div><span class="aa-name">Herald</span><span class="aa-status">idle</span></div>
+          <div class="active-agent-row" id="sys-agent-ashura"><div class="aa-dot" style="background:var(--accent)"></div><span class="aa-name">Ashura</span><span class="aa-status">idle</span></div>
+          <div class="active-agent-row" id="sys-agent-friday"><div class="aa-dot" style="background:var(--accent4)"></div><span class="aa-name">Friday</span><span class="aa-status">idle</span></div>
+          <div class="active-agent-row" style="border:none" id="sys-agent-coordinator"><div class="aa-dot" style="background:var(--accent2)"></div><span class="aa-name">Coordinator</span><span class="aa-status">idle</span></div>
+        </div>
+
+        <div class="sys-card">
+          <div class="mem-card-header">Memory</div>
+          <div class="active-agent-row"><span class="aa-name">Episodes</span><span class="aa-status" id="memory-episode-count" style="color:var(--text)">—</span></div>
+          <div class="active-agent-row" style="border:none"><span class="aa-name">Semantic keys</span><span class="aa-status" id="memory-semantic-count" style="color:var(--text)">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace" id="ws-settings">
+      <div class="agents-header"><h2>Settings</h2></div>
+      <div class="settings-layout">
+        
+        <div class="settings-group">
+          <div class="settings-group-title">General</div>
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="settings-row-info"><div class="settings-row-label">Auto Router</div><div class="settings-row-desc">Auto select best agent</div></div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info"><div class="settings-row-label">Language</div></div>
+              <select class="settings-select" style="width:100px"><option>English</option><option>Spanish</option></select>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">Backend Connection</div>
+          <div class="settings-card">
+            <div class="settings-row" onclick="jarvisConnect()">
+              <div class="settings-row-info"><div class="settings-row-label" style="color:var(--accent)">Force Reconnect</div><div class="settings-row-desc" id="ws-url-text">WebSocket</div></div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info"><div class="settings-row-label">Active Persona</div></div>
+              <select class="settings-select" id="active-agent-select" onchange="jarvisCurrentAgent=this.value" style="width:150px">
+                <option value="oracle">ORACLE</option><option value="coder">CODER</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">Voice & STT</div>
+          <div class="settings-card">
+            <div class="settings-row" onclick="runSTTDiag()">
+              <div class="settings-row-info"><div class="settings-row-label" style="color:var(--accent)">Run Audio Diagnostics</div></div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info"><div class="settings-row-label">Continuous Mic</div></div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info"><div class="settings-row-label">Auto-speak</div></div>
+              <div class="toggle" id="autospeak-toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">API Keys (Local)</div>
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="api-key-row">
+                <div class="settings-row-label">Gemini</div>
+                <input class="api-key-input" type="password" id="key-gemini" placeholder="AIza..." style="text-align:left; background:var(--bg-deep); padding:12px; border-radius:12px;"/>
+                <div class="api-key-actions">
+                  <button class="ai-action-btn" onclick="testKey('gemini')">Test</button>
+                  <button class="ai-action-btn" style="background:var(--accent3); border:none; color:#fff" onclick="saveKey('gemini')">Save</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <nav id="bottom-nav">
+    <div class="nav-item active" onclick="switchWS('chat')"><div class="nav-icon">💬</div><div class="nav-label">Chat</div></div>
+    <div class="nav-item" onclick="switchWS('agents')"><div class="nav-icon">🤝</div><div class="nav-label">Agents</div></div>
+    <div class="nav-item" onclick="switchWS('coder')"><div class="nav-icon">💻</div><div class="nav-label">Coder</div></div>
+    <div class="nav-item" onclick="switchWS('browser')"><div class="nav-icon">🌐</div><div class="nav-label">Browser</div></div>
+    <div class="nav-item" onclick="switchWS('memory')"><div class="nav-icon">🧠</div><div class="nav-label">Memory</div></div>
+    <div class="nav-item" onclick="switchWS('tasks')"><div class="nav-icon">📋</div><div class="nav-label">Tasks</div></div>
+    <div class="nav-item" onclick="switchWS('automation')"><div class="nav-icon">⚡</div><div class="nav-label">Automate</div></div>
+    <div class="nav-item" onclick="switchWS('system')"><div class="nav-icon">📊</div><div class="nav-label">System</div></div>
+  </nav>
+
+  <div class="sheet-overlay" id="modal-overlay" onclick="closeModal()">
+    <div class="bottom-sheet" onclick="event.stopPropagation()">
+      <div class="sheet-drag-handle"></div>
+      <div class="sheet-header">
+        <div class="sheet-title" id="modal-title">Details</div>
+        <button class="sheet-close" onclick="closeModal()">✕</button>
+      </div>
+      <div id="modal-body" style="font-size:15px; line-height:1.6; color:var(--text-dim);"></div>
+    </div>
+  </div>
+
+  <div class="sheet-overlay" id="explorer-sheet" onclick="closeSheet('explorer-sheet')">
+    <div class="bottom-sheet" onclick="event.stopPropagation()">
+      <div class="sheet-drag-handle"></div>
+      <div class="sheet-header"><div class="sheet-title">File Explorer</div></div>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <div class="settings-row" style="padding:12px; border-radius:12px; background:var(--bg-input)" onclick="loadFile('main','py'); closeSheet('explorer-sheet')">🐍 main.py</div>
+        <div class="settings-row" style="padding:12px; border-radius:12px; background:var(--bg-input)" onclick="loadFile('action_coordinator','py'); closeSheet('explorer-sheet')">🐍 action_coordinator.py</div>
+        <div class="settings-row" style="padding:12px; border-radius:12px; background:var(--bg-input)" onclick="loadFile('requirements','txt'); closeSheet('explorer-sheet')">📄 requirements.txt</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sheet-overlay" id="ai-output-sheet" onclick="closeSheet('ai-output-sheet')">
+    <div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:60vh;">
+      <div class="sheet-drag-handle"></div>
+      <div class="sheet-header"><div class="sheet-title">AI Suggestions</div></div>
+      <div id="ai-output" style="display:flex; flex-direction:column; gap:12px;">
+        <div class="sys-card" style="background:var(--bg-input)">
+          <div style="font-size:11px; color:var(--accent); margin-bottom:8px; font-weight:700">💡 TIP</div>
+          <div style="font-size:14px; color:var(--text)">Select code to analyze.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ MODEL SWITCHER SHEET — dynamic Ollama + cloud models ═══ -->
+  <div class="sheet-overlay" id="model-sheet" onclick="closeSheet('model-sheet')">
+    <div class="bottom-sheet" onclick="event.stopPropagation()" style="max-height:80vh;overflow:hidden;display:flex;flex-direction:column;">
+      <div class="sheet-drag-handle"></div>
+      <div class="sheet-header" style="display:flex;align-items:center;justify-content:space-between;padding-right:12px;">
+        <div class="sheet-title">Select Model</div>
+        <button onclick="loadOllamaModels()" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--accent);font-size:12px;padding:4px 10px;cursor:pointer;">🔄 Refresh</button>
+      </div>
+
+      <!-- Cloud providers -->
+      <div style="padding:0 16px 6px;font-size:11px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;">☁ CLOUD</div>
+      <div class="settings-card" style="margin:0 12px 8px;">
+        <div class="settings-row model-option" data-model="groq" data-kind="cloud" onclick="selectModel(this)">
+          <span style="font-size:15px;">⚡ Groq</span>
+          <span class="model-check" style="color:var(--accent3)"></span>
+        </div>
+        <div class="settings-row model-option" data-model="gemini" data-kind="cloud" onclick="selectModel(this)">
+          <span style="font-size:15px;">🌟 Gemini</span>
+          <span class="model-check" style="color:var(--accent3)"></span>
+        </div>
+        <div class="settings-row model-option" data-model="openvino" data-kind="cloud" onclick="selectModel(this)" style="border:none;">
+          <span style="font-size:15px;">🧠 OpenVINO</span>
+          <span class="model-check" style="color:var(--accent3)"></span>
+        </div>
+      </div>
+
+      <!-- Local Ollama models — populated by JS -->
+      <div style="padding:0 16px 6px;font-size:11px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;">🖥 LOCAL · OLLAMA</div>
+      <div id="ollama-model-list" class="settings-card" style="margin:0 12px 12px;overflow-y:auto;max-height:42vh;">
+        <div style="padding:14px;text-align:center;color:var(--text-muted);font-size:13px;" id="ollama-model-placeholder">
+          Checking Ollama…
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+//  JARVIS BACKEND BRIDGE  ─  server.py WebSocket protocol (ws://host:7788/ws)
+//  Auto-detects host — works on localhost AND LAN AND ngrok/tunnel.
+//  e.g. http://192.168.1.10:7788/jarvisV5_mobile.html → ws://192.168.1.10:7788/ws
+// ═══════════════════════════════════════════════════════════════════════
+const JARVIS_WS_URL = 'wss://catchy-wow-extras.ngrok-free.dev/ws';
+                      + location.host + '/ws';
+
+let jarvisSocket     = null;
+let jarvisConnected  = false;
+let jarvisCurrentAgent = 'oracle';
+
+// ── Connection ───────────────────────────────────────────────────────
+function jarvisConnect() {
+  try { jarvisSocket = new WebSocket(JARVIS_WS_URL); }
+  catch (e) { setBackendBadge(false); return; }
+
+  jarvisSocket.onopen = () => {
+    jarvisConnected = true;
+    setBackendBadge(true);
+    console.log('[JARVIS] connected', JARVIS_WS_URL);
+  };
+  jarvisSocket.onclose = () => {
+    jarvisConnected = false;
+    setBackendBadge(false);
+    setTimeout(jarvisConnect, 2000); // auto-reconnect
+  };
+  jarvisSocket.onerror = (e) => console.warn('[JARVIS] ws error', e);
+  jarvisSocket.onmessage = (ev) => {
+    try { handleJarvisMessage(JSON.parse(ev.data)); } catch (e) {}
+  };
+}
+
+function setBackendBadge(online) {
+  const badge = document.getElementById('backend-status-badge');
+  if (badge) {
+    badge.textContent = online ? '● ONLINE' : '● OFFLINE';
+    badge.className   = online ? 'stt-status ok' : 'stt-status err';
+  }
+  // Update status dot in header
+  const dot = document.querySelector('.status-dot');
+  if (dot) dot.style.background = online ? 'var(--accent3)' : 'var(--accent5)';
+  // Update ws-url-text
+  const urlEl = document.getElementById('ws-url-text');
+  if (urlEl) urlEl.textContent = JARVIS_WS_URL;
+  // Update stt badge
+  const sttBadge = document.getElementById('stt-status-badge');
+  if (sttBadge && online) { sttBadge.textContent = 'Server STT Ready'; sttBadge.className = 'stt-status ok'; }
+}
+
+function jarvisSend(payload) {
+  if (jarvisSocket && jarvisConnected) {
+    jarvisSocket.send(JSON.stringify(payload));
+    return true;
+  }
+  showToast('Backend offline — start server.py', 'err');
+  return false;
+}
+
+// ── Message Dispatcher ───────────────────────────────────────────────
+// Full server.py protocol:
+// boot | metrics | agent_metrics | heartbeat | status | thinking |
+// chat_reply | stt_result | tts_audio | tool_result | memory_stats |
+// memory_results | memory_ack | task_created | task_list_result |
+// task_error | settings_ack | pong
+function handleJarvisMessage(msg) {
+  switch (msg.type) {
+
+    // ── Initial handshake ─────────────────────────────────────────
+    case 'boot':
+      if (msg.providers)    updateProviderBadges(msg.providers);
+      if (msg.memory_stats) updateMemoryStats(msg.memory_stats);
+      if (msg.diagnostics)  updateDiagnostics(msg.diagnostics);
+      if (msg.agents)       updateAllAgentCards(msg.agents);
+      if (msg.settings)     applyServerSettings(msg.settings);
+      setStatusText('▸ READY');
+      showToast('JARVIS connected ✓', 'ok');
+      break;
+
+    // ── Live system metrics (1 s cadence) ────────────────────────
+    case 'metrics':
+      updateMetrics(msg);
+      break;
+
+    // ── Per-agent metrics ─────────────────────────────────────────
+    case 'agent_metrics':
+      updateAgentCard(msg);
+      updateSystemAgentRow(msg);
+      break;
+
+    // ── Status bar ────────────────────────────────────────────────
+    case 'status':
+      setStatusText(msg.text);
+      break;
+
+    // ── AI typing indicator ───────────────────────────────────────
+    case 'thinking':
+      showTyping();
+      break;
+
+    // ── AI reply ─────────────────────────────────────────────────
+    case 'chat_reply':
+      removeTyping();
+      {
+        // Strip any "System Response" / "### Response:" label the LLM may emit
+        const cleanText = _cleanReply(msg.text || '');
+        if (_wantTTSForPending) {
+          // Hold the text back and reveal it in step with the TTS audio
+          // (see playTTSAudio) instead of dumping it on screen instantly
+          // while the voice is still seconds away.
+          _holdReplyForVoiceSync(cleanText, msg.agent, msg.provider);
+        } else {
+          appendMsg('jarvis', cleanText, msg.agent, msg.provider);
+        }
+      }
+      if (msg.provider) {
+        const pill = document.getElementById('active-provider-pill');
+        if (pill) pill.textContent = msg.provider + ' ▾';
+      }
+      break;
+
+    // ── Ollama model list (response to list_ollama_models) ────────
+    case 'ollama_models':
+      _handleOllamaModelList(msg);
+      break;
+
+    // ── Model switch confirmed by backend ──────────────────────────
+    case 'model_switched':
+      showToast('✅ Now using: ' + msg.model, 'ok');
+      {
+        const pill = document.getElementById('active-provider-pill');
+        if (pill) {
+          const icon = msg.kind === 'ollama' ? ollamaIcon(msg.model) : '';
+          pill.textContent = (icon ? icon + ' ' : '') + msg.model.toUpperCase() + ' ▾';
+        }
+      }
+      break;
+
+    // ── Model switch failed ─────────────────────────────────────────
+    case 'model_switch_error':
+      showToast('❌ Switch failed: ' + (msg.error || 'unknown error'), 'err');
+      break;
+
+    // ── STT result → auto-fill and send ──────────────────────────
+    case 'stt_result':
+      document.getElementById('chat-input').value = msg.transcript || '';
+      document.getElementById('stt-status-badge').textContent = '✓ Transcribed';
+      document.getElementById('stt-status-badge').className = 'stt-status ok';
+      if (msg.transcript) sendMessage();
+      break;
+
+    // ── TTS audio (base64) ────────────────────────────────────────
+    case 'tts_audio':
+      playTTSAudio(msg.b64, msg.mime, msg.duration_s);
+      break;
+
+    // ── Memory stats ──────────────────────────────────────────────
+    case 'memory_stats':
+      updateMemoryStats(msg);
+      break;
+
+    // ── Memory recall results ─────────────────────────────────────
+    case 'memory_results':
+      renderMemoryResults(msg);
+      break;
+
+    // ── Memory store ack ─────────────────────────────────────────
+    case 'memory_ack':
+      showToast('Memory stored: ' + msg.key, 'ok');
+      break;
+
+    // ── Tool result ───────────────────────────────────────────────
+    case 'tool_result':
+      showModal('Tool: ' + msg.tool,
+        `<pre style="font-size:12px;white-space:pre-wrap;color:var(--text)">${msg.result || '(no output)'}</pre>`);
+      break;
+
+    // ── Task planner ──────────────────────────────────────────────
+    case 'task_created':
+      renderNewTask(msg);
+      showToast('Task created: ' + msg.intent, 'ok');
+      break;
+
+    case 'task_list_result':
+      renderTaskList(msg.plans || []);
+      break;
+
+    case 'task_error':
+      showToast('Task error: ' + msg.error, 'err');
+      break;
+
+    // ── Settings ack ─────────────────────────────────────────────
+    case 'settings_ack':
+      showToast('Settings saved ✓', 'ok');
+      break;
+
+    // ── Heartbeat / pong (no-op) ──────────────────────────────────
+    case 'heartbeat':
+    case 'pong':
+      break;
+  }
+}
+
+// ── Status text ──────────────────────────────────────────────────────
+function setStatusText(text) {
+  // Show as header subtitle or toast for mobile
+  const el = document.getElementById('status-bar-text');
+  if (el) el.textContent = text;
+}
+
+// ── System metrics → animated SVG rings ──────────────────────────────
+function updateMetrics(m) {
+  // Text values
+  _setText('metric-cpu',  m.cpu  != null ? m.cpu  + '%' : null);
+  _setText('metric-ram',  m.ram_pct != null ? m.ram_pct + '%' : null);
+  _setText('metric-disk', m.disk_pct != null ? m.disk_pct + '%' : null);
+  // Extra fields
+  _setText('metric-net-up',   m.net_up);
+  _setText('metric-net-dn',   m.net_dn);
+  _setText('metric-ram-used', m.ram_used  != null ? m.ram_used + 'GB / ' + m.ram_total + 'GB' : null);
+  _setText('metric-disk-used',m.disk_used != null ? m.disk_used + 'GB / ' + m.disk_total + 'GB' : null);
+  _setText('metric-temp',     m.temp_cpu  != null ? m.temp_cpu.toFixed(0) + '°C' : null);
+  // Battery
+  if (m.battery) {
+    _setText('metric-bat', m.battery.percent.toFixed(0) + '% ' + (m.battery.power_plugged ? '⚡' : '🔋'));
+  }
+  // SVG ring offsets (circumference = 100.53 for r=16)
+  const C = 100.53;
+  _setRing('cpu-ring-fill',  m.cpu);
+  _setRing('ram-ring-fill',  m.ram_pct);
+  _setRing('disk-ring-fill', m.disk_pct);
+}
+
+function _setText(id, val) {
+  const el = document.getElementById(id);
+  if (el && val != null) el.textContent = val;
+}
+
+function _setRing(id, pct) {
+  const el = document.getElementById(id);
+  if (el && pct != null) {
+    const C = 100.53;
+    el.style.strokeDashoffset = (C - (pct / 100) * C).toFixed(1);
+  }
+}
+
+// ── Memory stats ─────────────────────────────────────────────────────
+function updateMemoryStats(m) {
+  _setText('memory-episode-count',  m.episodes);
+  _setText('memory-semantic-count', m.semantic);
+  // Compact pill in system view
+  _setText('sys-mem-episodes', m.episodes != null ? m.episodes + ' episodes' : null);
+}
+
+// ── Memory results → memory workspace ────────────────────────────────
+function renderMemoryResults(msg) {
+  const container = document.getElementById('memory-results-list');
+  if (!container) return;
+  container.innerHTML = '';
+
+  // Recent episodes
+  (msg.recent || []).slice(0, 6).forEach(ep => {
+    const div = document.createElement('div');
+    div.className = 'mem-entry';
+    div.innerHTML = `<div class="mem-entry-key">${ep.role || 'user'} · ${ep.agent || ''}</div>${ep.content || ''}`;
+    container.appendChild(div);
+  });
+
+  // Semantic results
+  if (msg.semantic && msg.semantic.length) {
+    const hdr = document.createElement('div');
+    hdr.className = 'mem-card-header';
+    hdr.style.marginTop = '16px';
+    hdr.textContent = '🔍 Semantic Matches';
+    container.appendChild(hdr);
+    msg.semantic.forEach(([key, val]) => {
+      const div = document.createElement('div');
+      div.className = 'mem-entry';
+      div.innerHTML = `<div class="mem-entry-key">${key}</div>${val}`;
+      container.appendChild(div);
+    });
+  }
+}
+
+// ── Diagnostics → system card ─────────────────────────────────────────
+function updateDiagnostics(d) {
+  _setText('diag-os',       d.os);
+  _setText('diag-hostname', d.hostname);
+  _setText('diag-python',   d.python);
+  _setText('diag-cpu-name', d.cpu_name);
+  _setText('diag-cpu-count',d.cpu_count != null ? d.cpu_count + ' cores' : null);
+  _setText('diag-pid',      d.pid != null ? 'PID ' + d.pid : null);
+}
+
+// ── Provider badges ───────────────────────────────────────────────────
+function updateProviderBadges(providers) {
+  ['groq','gemini','ollama'].forEach(p => {
+    const el = document.getElementById('provider-' + p);
+    if (el) {
+      const ok = !!providers[p];
+      el.textContent = ok ? '✓ ' + p.charAt(0).toUpperCase()+p.slice(1) : '✗ ' + p;
+      el.style.color = ok ? 'var(--accent3)' : 'var(--accent5)';
+    }
+  });
+}
+
+// ── Agent cards ───────────────────────────────────────────────────────
+// Maps server agent_id → card DOM id
+const AGENT_CARD_MAP = {
+  oracle:     'agent-oracle',
+  athena:     'agent-athena',
+  vision_eng: 'agent-coder',
+  herald:     'agent-browser',
+  ashura:     'agent-memory',
+  friday:     'agent-automation',
+  coordinator:'agent-coordinator',
+};
+
+function updateAllAgentCards(agents) {
+  Object.values(agents).forEach(a => updateAgentCard(a));
+}
+
+function updateAgentCard(msg) {
+  const cardId = AGENT_CARD_MAP[msg.agent_name] || AGENT_CARD_MAP[msg.agent_id];
+  if (!cardId) return;
+  const card = document.getElementById(cardId);
+  if (!card) return;
+
+  const badge = card.querySelector('.agent-status-badge');
+  if (badge) {
+    const s = msg.status || 'idle';
+    badge.textContent = '● ' + s.charAt(0).toUpperCase() + s.slice(1);
+    badge.className = 'agent-status-badge ' + (s === 'working' ? 'busy' : s === 'error' ? 'busy' : 'online');
+  }
+  // Update data-status for filter
+  card.dataset.status = msg.status === 'working' ? 'busy' : 'online';
+
+  // Show current task if busy
+  const taskEl = card.querySelector('.agent-current-task');
+  if (taskEl) taskEl.textContent = msg.current_task || '';
+}
+
+// ── System screen agent rows ──────────────────────────────────────────
+function updateSystemAgentRow(msg) {
+  const rowId = 'sys-agent-' + (msg.agent_name || msg.agent_id);
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const statusEl = row.querySelector('.aa-status');
+  if (statusEl) statusEl.textContent = msg.status || 'idle';
+  const dot = row.querySelector('.aa-dot');
+  if (dot) {
+    dot.style.background = msg.status === 'working' ? 'var(--accent4)' :
+                           msg.status === 'error'   ? 'var(--accent5)' : 'var(--accent)';
+  }
+}
+
+// ── Tasks ─────────────────────────────────────────────────────────────
+function renderNewTask(msg) {
+  const container = document.getElementById('tasks-inbox');
+  if (!container) return;
+  const item = document.createElement('div');
+  item.className = 'kanban-item';
+  item.dataset.planId = msg.plan_id;
+  item.innerHTML = `
+    <div class="kanban-item-title">${msg.intent || 'New task'}</div>
+    <div class="kanban-item-meta">
+      <span class="kanban-agent-tag">Planner</span>
+      <span style="font-size:12px;color:var(--text-muted)">${(msg.sub_goals||[]).length} steps</span>
+    </div>`;
+  container.prepend(item);
+  // Update badge
+  const badge = document.getElementById('tasks-inbox-count');
+  if (badge) badge.textContent = container.children.length;
+}
+
+function renderTaskList(plans) {
+  const container = document.getElementById('tasks-inbox');
+  if (!container) return;
+  container.innerHTML = '';
+  plans.forEach(plan => {
+    const item = document.createElement('div');
+    item.className = 'kanban-item';
+    item.innerHTML = `
+      <div class="kanban-item-title">${plan.intent}</div>
+      <div class="kanban-item-meta">
+        <span class="kanban-agent-tag">${plan.root_goal?.status || 'pending'}</span>
+        <span style="font-size:12px;color:var(--text-muted)">${(plan.sub_goals||[]).length} steps</span>
+      </div>`;
+    container.appendChild(item);
+  });
+  const badge = document.getElementById('tasks-inbox-count');
+  if (badge) badge.textContent = plans.length;
+}
+
+// ── Server settings apply ─────────────────────────────────────────────
+function applyServerSettings(settings) {
+  const voice = settings.voice || {};
+  const autoSpeakToggle = document.getElementById('autospeak-toggle');
+  if (autoSpeakToggle) autoSpeakToggle.classList.toggle('on', !!voice.tts_enabled);
+}
+
+// ── Push settings to server ───────────────────────────────────────────
+function pushSettingsToServer() {
+  const ttsOn = document.getElementById('autospeak-toggle')?.classList.contains('on');
+  jarvisSend({
+    type: 'settings_update',
+    settings: { voice: { tts_enabled: ttsOn } }
+  });
+}
+
+// ── VOICE/TEXT SYNC ──────────────────────────────────────────────────
+// Without this, chat_reply (text) and tts_audio (voice) arrive as two
+// separate, independently-timed WS messages — text used to render the
+// instant it arrived while the audio (which takes longer to synthesize)
+// showed up seconds later. These hold the reply back and reveal it paced
+// to actual <audio> playback progress so they finish together.
+let _wantTTSForPending         = false;
+let _pendingVoiceReply         = null;   // { text, div, contentEl, provider }
+let _pendingVoiceFallbackTimer = null;
+let _activeTTSAudio            = null;
+
+function _holdReplyForVoiceSync(text, agent, provider) {
+  if (_pendingVoiceFallbackTimer) clearTimeout(_pendingVoiceFallbackTimer);
+  const msgs = document.getElementById('chat-messages');
+  const now  = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const div  = document.createElement('div');
+  div.className = 'msg jarvis';
+  const providerTag = provider ? `<span style="font-size:10px;color:var(--text-muted);margin-left:6px">${provider}</span>` : '';
+  div.innerHTML = `
+    <div class="msg-avatar jarvis">🤖</div>
+    <div class="msg-body">
+      <div class="msg-bubble"><span class="voice-sync-content">🔊</span>${providerTag}</div>
+      <div class="msg-time">${now}</div>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  _pendingVoiceReply = { text, div, contentEl: div.querySelector('.voice-sync-content'), provider };
+
+  // Safety net: if tts_audio never arrives (TTS disabled server-side or
+  // synthesis failed), reveal the text anyway after a grace period scaled
+  // to reply length instead of leaving the bubble stuck on "🔊".
+  const delay = Math.min(8000, 3000 + text.length * 20);
+  _pendingVoiceFallbackTimer = setTimeout(_revealPendingReplyInstantly, delay);
+}
+
+function _revealPendingReplyInstantly() {
+  if (!_pendingVoiceReply) return;
+  _pendingVoiceReply.contentEl.innerHTML = _renderMarkdown(_pendingVoiceReply.text);
+  _pendingVoiceReply = null;
+  if (_pendingVoiceFallbackTimer) { clearTimeout(_pendingVoiceFallbackTimer); _pendingVoiceFallbackTimer = null; }
+}
+
+// ── TTS playback ──────────────────────────────────────────────────────
+// Decode base64 audio from server (TTS) and play it, revealing any held
+// reply text in step with actual playback progress.
+//
+// IMPORTANT: do not trust audio.duration for the MP3 blobs edge-tts
+// produces — Chromium reports it as Infinity (not NaN!) for header-less/
+// streamed MP3 until the file finishes playing, which silently breaks
+// currentTime/duration progress math. serverDurationS (measured on the
+// backend from the actual audio bytes) is the reliable source; audio.duration
+// is only used as a fallback, and only when finite.
+function playTTSAudio(b64, mime, serverDurationS) {
+  if (!b64) { if (_pendingVoiceReply) _revealPendingReplyInstantly(); return; }
+  try {
+    if (_pendingVoiceFallbackTimer) { clearTimeout(_pendingVoiceFallbackTimer); _pendingVoiceFallbackTimer = null; }
+    const bytes = new Uint8Array(atob(b64).split('').map(c => c.charCodeAt(0)));
+    const blob  = new Blob([bytes], { type: mime || 'audio/mpeg' });
+    const url   = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    _activeTTSAudio = audio;
+
+    const reply = _pendingVoiceReply;
+    let _progressTimer = null;
+
+    if (reply) {
+      const fullText = reply.text;
+      // During playback we reveal plain text slices (no markdown parsing on
+      // every 60ms tick — too expensive on mobile). On completion we do a
+      // single _renderMarkdown pass so the final bubble is fully formatted.
+      const renderUpTo = (frac) => {
+        const cut = Math.max(1, Math.round(fullText.length * frac));
+        if (frac >= 1) {
+          reply.contentEl.innerHTML = _renderMarkdown(fullText);
+        } else {
+          reply.contentEl.textContent = fullText.slice(0, cut);
+        }
+      };
+      renderUpTo(0.02); // show a sliver immediately — no blank bubble on start
+
+      const isUsableDuration = (d) => typeof d === 'number' && isFinite(d) && d > 0;
+      const knownDuration = isUsableDuration(serverDurationS) ? serverDurationS : null;
+
+      if (knownDuration) {
+        const startedAt = performance.now();
+        _progressTimer = setInterval(() => {
+          const elapsed = (performance.now() - startedAt) / 1000;
+          renderUpTo(Math.min(1, elapsed / knownDuration));
+        }, 60);
+      } else {
+        audio.addEventListener('timeupdate', () => {
+          if (!isUsableDuration(audio.duration)) return;
+          renderUpTo(Math.min(1, audio.currentTime / audio.duration));
+        });
+      }
+
+      const finishReveal = () => {
+        if (_progressTimer) { clearInterval(_progressTimer); _progressTimer = null; }
+        if (_pendingVoiceReply !== reply) return; // already finished elsewhere
+        renderUpTo(1);
+        _pendingVoiceReply = null;
+      };
+      audio.addEventListener('ended', finishReveal);
+      audio.addEventListener('error', () => { if (_progressTimer) clearInterval(_progressTimer); finishReveal(); });
+    }
+
+    audio.play().catch(e => {
+      console.warn('TTS play failed', e);
+      if (_progressTimer) { clearInterval(_progressTimer); _progressTimer = null; }
+      if (reply) _revealPendingReplyInstantly();
+    });
+    audio.onended = () => { URL.revokeObjectURL(url); if (_activeTTSAudio === audio) _activeTTSAudio = null; };
+  } catch (e) {
+    console.error('TTS error', e);
+    if (_pendingVoiceReply) _revealPendingReplyInstantly();
+  }
+}
+
+// ── Server-side STT ───────────────────────────────────────────────────
+let jarvisMediaRecorder = null;
+let jarvisAudioChunks   = [];
+
+function startServerSTT() {
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    jarvisAudioChunks   = [];
+    jarvisMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    jarvisMediaRecorder.ondataavailable = e => jarvisAudioChunks.push(e.data);
+    jarvisMediaRecorder.onstop = () => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        jarvisSend({ type: 'stt_audio', data: reader.result.split(',')[1], mime: 'audio/webm' });
+      };
+      reader.readAsDataURL(new Blob(jarvisAudioChunks, { type: 'audio/webm' }));
+      stream.getTracks().forEach(t => t.stop());
+    };
+    jarvisMediaRecorder.start();
+  }).catch(() => showToast('Mic access denied.', 'err'));
+}
+
+function stopServerSTT() {
+  if (jarvisMediaRecorder && jarvisMediaRecorder.state !== 'inactive')
+    jarvisMediaRecorder.stop();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  UI LOGIC
+// ─────────────────────────────────────────────────────────────────────
+
+const WS_IDS = ['chat','agents','coder','browser','memory','tasks','automation','system','settings'];
+function switchWS(id) {
+  WS_IDS.forEach(w => {
+    const el  = document.getElementById('ws-' + w);
+    if (el) el.classList.toggle('active', w === id);
+  });
+  document.querySelectorAll('.nav-item').forEach(n => {
+    n.classList.remove('active');
+    if (n.getAttribute('onclick') && n.getAttribute('onclick').includes("'" + id + "'"))
+      n.classList.add('active');
+  });
+  // Lazy-load tasks list when switching to tasks
+  if (id === 'tasks' && jarvisConnected) jarvisSend({ type: 'task_list' });
+  // Lazy-load memory when switching
+  if (id === 'memory' && jarvisConnected) jarvisSend({ type: 'memory_recall', query: '' });
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────
+function autoGrow(ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }
+function handleChatKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
+
+function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const txt = input.value.trim();
+  if (!txt) return;
+  // If a previous reply is still mid voice-sync reveal, finish it now
+  if (_pendingVoiceReply) _revealPendingReplyInstantly();
+  appendMsg('user', txt);
+  input.value = ''; input.style.height = 'auto';
+
+  const wantTTS = document.getElementById('autospeak-toggle')?.classList.contains('on') || false;
+  _wantTTSForPending = wantTTS;
+  if (jarvisConnected) {
+    showTyping();
+    jarvisSend({ type: 'chat', text: txt, agent: jarvisCurrentAgent, tts: wantTTS });
+  } else {
+    showTyping();
+    setTimeout(() => {
+      removeTyping();
+      appendMsg('jarvis', '⚠️ Offline — start server.py for real AI. Try: <code>python server.py</code>');
+    }, 600);
+  }
+}
+
+// ── Markdown renderer ──────────────────────────────────────────────────
+function _esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// Strip server-side label artefacts that may survive prompt instructions
+// ("System Response", "### Response:", etc.) from the start of a reply.
+function _cleanReply(text) {
+  if (!text) return '';
+  return text
+    .replace(/^(?:#{1,3}\s*)?(?:system\s*response|response|answer|output|result)\s*[:\-–—]?\s*\n+/i, '')
+    .replace(/^\n+/, '')
+    .trim();
+}
+
+function _renderMarkdown(text) {
+  if (!text) return '';
+
+  // Clean label artefacts first
+  text = _cleanReply(text);
+
+  let html = text
+    // Fenced code blocks (must come before inline code)
+    .replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+      const langLabel = lang
+        ? `<span style="color:var(--text-muted);font-size:9px;letter-spacing:.04em;text-transform:uppercase">${_esc(lang)}</span><br>`
+        : '';
+      return `<div style="background:var(--bg-input,#111);border:1px solid var(--border,#333);border-radius:6px;`
+           + `padding:10px 14px;margin:6px 0;font-family:monospace;font-size:11px;white-space:pre;`
+           + `overflow-x:auto">${langLabel}${_esc(code.replace(/\n$/, ''))}</div>`;
+    })
+    // Inline code
+    .replace(/`([^`\n]+)`/g, '<code style="background:var(--bg-input,#111);color:var(--accent,#00d4ff);border-radius:3px;padding:1px 5px;font-family:monospace;font-size:11px">$1</code>')
+    // H1–H3 headings — styled, never raw symbols
+    .replace(/^### (.+)$/gm, '<p style="margin:10px 0 3px;font-size:11px;font-weight:600;color:var(--accent3,#a78bfa);letter-spacing:.06em;text-transform:uppercase">$1</p>')
+    .replace(/^## (.+)$/gm,  '<p style="margin:10px 0 3px;font-size:13px;font-weight:700;color:var(--text,#e2e8f0)">$1</p>')
+    .replace(/^# (.+)$/gm,   '<p style="margin:12px 0 4px;font-size:14px;font-weight:700;color:var(--accent,#00d4ff)">$1</p>')
+    // Bold + italic combos (order matters)
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g,     '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,         '<em>$1</em>')
+    .replace(/__(.+?)__/g,         '<strong>$1</strong>')
+    .replace(/_([^_\n]+)_/g,       '<em>$1</em>')
+    // Horizontal rules
+    .replace(/^(?:---+|\*\*\*+)$/gm, '<hr style="border:none;border-top:1px solid var(--border,#333);margin:8px 0">')
+    // Bullet lists — greedy block match
+    .replace(/((?:^[ \t]*[*\-] .+$\n?)+)/gm, m => {
+      const items = m.trim().split('\n').filter(Boolean)
+        .map(l => `<li style="margin:3px 0;line-height:1.5">${l.replace(/^[ \t]*[*\-] /, '')}</li>`).join('');
+      return `<ul style="margin:5px 0 5px 16px;padding:0;list-style:disc">${items}</ul>`;
+    })
+    // Numbered lists
+    .replace(/((?:^[ \t]*\d+\. .+$\n?)+)/gm, m => {
+      const items = m.trim().split('\n').filter(Boolean)
+        .map(l => `<li style="margin:3px 0;line-height:1.5">${l.replace(/^[ \t]*\d+\. /, '')}</li>`).join('');
+      return `<ol style="margin:5px 0 5px 18px;padding:0">${items}</ol>`;
+    })
+    // Newlines → <br>
+    .replace(/\n/g, '<br>');
+
+  // Clean up double-breaks adjacent to block elements
+  html = html
+    .replace(/(<\/(ul|ol|div|p|hr)>)<br>/g, '$1')
+    .replace(/<br>(<(?:ul|ol|div|p|hr))/g, '$1');
+
+  return html;
+}
+
+function appendMsg(role, text, agent, provider) {
+  const msgs = document.getElementById('chat-messages');
+  const now  = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const div  = document.createElement('div');
+  div.className = 'msg ' + role;
+  const providerTag = provider ? `<span style="font-size:10px;color:var(--text-muted);margin-left:6px">${_esc(provider)}</span>` : '';
+  const bubbleContent = role === 'user'
+    ? _esc(text).replace(/\n/g, '<br>')
+    : _renderMarkdown(text);
+  div.innerHTML = `
+    <div class="msg-avatar ${role}">${role === 'user' ? '👤' : '🤖'}</div>
+    <div class="msg-body">
+      <div class="msg-bubble">${bubbleContent}${role === 'jarvis' ? providerTag : ''}</div>
+      <div class="msg-time">${now}</div>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function showTyping() {
+  if (document.getElementById('typing-indicator')) return;
+  const msgs = document.getElementById('chat-messages');
+  const div  = document.createElement('div');
+  div.id = 'typing-indicator'; div.className = 'msg jarvis';
+  div.innerHTML = `<div class="msg-avatar jarvis">🤖</div><div class="msg-body"><div class="msg-bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div></div>`;
+  msgs.appendChild(div); msgs.scrollTop = msgs.scrollHeight;
+}
+function removeTyping() { document.getElementById('typing-indicator')?.remove(); }
+
+// ── STT / Mic ────────────────────────────────────────────────────────
+let recognition = null;
+let isListening  = false;
+
+function startListening() {
+  const btn   = document.getElementById('mic-btn');
+  const badge = document.getElementById('stt-status-badge');
+
+  if (isListening) {
+    isListening = false;
+    btn.classList.remove('listening');
+    if (jarvisConnected) { stopServerSTT(); if (badge) { badge.textContent = '▸ Transcribing…'; badge.className = 'stt-status ok'; } }
+    else { recognition?.stop(); if (badge) { badge.textContent = 'STT Ready'; badge.className = 'stt-status ok'; } }
+    return;
+  }
+
+  if (jarvisConnected) {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(() => {
+      isListening = true; btn.classList.add('listening');
+      if (badge) { badge.textContent = '🔴 Listening…'; badge.className = 'stt-status err'; }
+      startServerSTT();
+    }).catch(() => showToast('Mic permission denied.', 'err'));
+    return;
+  }
+
+  const SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechAPI) return showToast('STT not supported. Use Chrome/Edge or connect backend.', 'err');
+  recognition = new SpeechAPI();
+  recognition.onstart = () => { isListening = true; btn.classList.add('listening'); if (badge) { badge.textContent = '🔴 Browser STT…'; badge.className = 'stt-status err'; } };
+  recognition.onresult = e => { document.getElementById('chat-input').value = Array.from(e.results).map(r => r[0].transcript).join(''); };
+  recognition.onend = () => { isListening = false; btn.classList.remove('listening'); sendMessage(); if (badge) { badge.textContent = '✓ Done'; badge.className = 'stt-status ok'; } };
+  recognition.onerror = e => showToast('STT Error: ' + e.error, 'err');
+  recognition.start();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────
+function showToast(msg, type = 'info') {
+  const t    = document.getElementById('toast');
+  const item = document.createElement('div');
+  item.className = 'toast-item';
+  item.style.borderColor = type === 'ok' ? 'var(--accent3)' : type === 'err' ? 'var(--accent5)' : 'var(--border)';
+  item.textContent = msg;
+  t.appendChild(item);
+  setTimeout(() => { item.style.opacity = '0'; item.style.transform = 'translateY(-40px)'; item.style.transition = 'all .3s'; setTimeout(() => item.remove(), 300); }, 3000);
+}
+
+// ── Bottom Sheets / Modal ─────────────────────────────────────────────
+function openSheet(id)  { document.getElementById(id)?.classList.add('open'); }
+function closeSheet(id) { document.getElementById(id)?.classList.remove('open'); }
+function showModal(title, body) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = body;
+  openSheet('modal-overlay');
+}
+function closeModal() { closeSheet('modal-overlay'); }
+
+// ── Coder workspace ───────────────────────────────────────────────────
+function loadFile(name, ext) {
+  document.getElementById('code-editor').value = `"""\n${name}.${ext}\nJARVIS AI OS\n"""\n\n`;
+  updateLineNums(document.getElementById('code-editor'));
+  closeSheet('explorer-sheet');
+}
+function updateLineNums(ta) {
+  document.getElementById('line-nums').innerHTML =
+    Array.from({ length: ta.value.split('\n').length }, (_, i) => i + 1).join('<br>');
+}
+function syncScroll(ta) { document.getElementById('line-nums').scrollTop = ta.scrollTop; }
+function aiAction(action) {
+  const code = document.getElementById('code-editor').value.trim();
+  if (!code) return showToast('No code to ' + action, 'err');
+  if (jarvisConnected) {
+    _wantTTSForPending = false;
+    jarvisSend({ type: 'chat', text: `${action} this code:\n\`\`\`python\n${code}\n\`\`\``, agent: 'vision_eng', tts: false });
+    switchWS('chat');
+  } else {
+    openSheet('ai-output-sheet');
+    document.getElementById('ai-output').innerHTML = `<div class="sys-card" style="background:var(--bg-input)"><div style="font-size:11px;color:var(--accent2);margin-bottom:8px;font-weight:700">✅ ${action.toUpperCase()}</div><div style="font-size:14px;color:var(--text)">Connect backend for real AI code ${action}.</div></div>`;
+  }
+}
+function runAICode() {
+  const prompt = document.getElementById('ai-code-prompt').value.trim();
+  if (!prompt) return;
+  if (jarvisConnected) {
+    _wantTTSForPending = false;
+    jarvisSend({ type: 'chat', text: 'Generate Python code: ' + prompt, agent: 'vision_eng', tts: false });
+    switchWS('chat');
+  } else {
+    document.getElementById('code-editor').value += '\n# AI: ' + prompt;
+    updateLineNums(document.getElementById('code-editor'));
+  }
+  document.getElementById('ai-code-prompt').value = '';
+}
+
+// ── Browser workspace ─────────────────────────────────────────────────
+function browserGo() {
+  const url = document.getElementById('browser-url').value.trim();
+  if (!url) return;
+  if (jarvisConnected) jarvisSend({ type: 'tool', tool: 'browser.navigate', args: { url } });
+  else showModal('Navigate', `Playwright → ${url}`);
+}
+function jarvisBrowse() {
+  const url = document.getElementById('browser-url').value.trim() || 'the web';
+  if (jarvisConnected) {
+    _wantTTSForPending = false;
+    jarvisSend({ type: 'chat', text: 'Browse ' + url, agent: 'herald', tts: false });
+    switchWS('chat');
+  } else showToast('Connect backend first', 'err');
+}
+
+// ── Agents workspace ──────────────────────────────────────────────────
+function filterAgents(status, btn) {
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.agent-card').forEach(c => {
+    c.style.display = (status === 'all' || c.dataset.status === status) ? '' : 'none';
+  });
+}
+function openAgentChat(name) {
+  switchWS('chat');
+  document.getElementById('chat-input').value = '@' + name + ' ';
+  document.getElementById('chat-input').focus();
+}
+function showAgentLog(name) {
+  showModal(name + ' — Logs',
+    `<div style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);line-height:2">
+     [INFO] ${name}Agent initialised<br>
+     [INFO] Subscribed to EventBus<br>
+     [DEBUG] ServiceRegistry OK<br>
+     [INFO] Awaiting tasks…</div>`);
+}
+
+// ── Memory workspace ──────────────────────────────────────────────────
+function memoryRecall() {
+  const q = document.getElementById('memory-search')?.value.trim() || '';
+  if (jarvisConnected) jarvisSend({ type: 'memory_recall', query: q });
+  else showToast('Connect backend first', 'err');
+}
+function memoryStore() {
+  const key = document.getElementById('memory-key')?.value.trim();
+  const val = document.getElementById('memory-val')?.value.trim();
+  if (!key || !val) return showToast('Enter key and value', 'err');
+  if (jarvisConnected) { jarvisSend({ type: 'memory_store', key, value: val }); }
+  else showToast('Connect backend first', 'err');
+}
+
+// ── Diagnostics ───────────────────────────────────────────────────────
+function runSTTDiag() {
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(() => showToast('Mic permission ✓ granted', 'ok'))
+    .catch(() => showToast('Mic denied — allow in browser settings', 'err'));
+}
+
+// ── API Key test / save (local, UI-only) ──────────────────────────────
+function testKey(provider) { showToast('Testing ' + provider + ' key…', 'info'); }
+function saveKey(provider) { showToast(provider + ' key saved (local)', 'ok'); }
+
+// ── Task creation ─────────────────────────────────────────────────────
+function createTask() {
+  const input = document.getElementById('task-input');
+  const text  = input?.value.trim();
+  if (!text) return showToast('Enter a task description', 'err');
+  if (!jarvisConnected) return showToast('Connect backend first', 'err');
+  jarvisSend({ type: 'task_create', text });
+  input.value = '';
+  showToast('Planning task…', 'info');
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  INIT
+// ─────────────────────────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  jarvisConnect();
+  if (document.getElementById('ws-url-text')) document.getElementById('ws-url-text').textContent = JARVIS_WS_URL;
+  if (document.getElementById('code-editor')) updateLineNums(document.getElementById('code-editor'));
+  // Autospeak toggle pushes settings on change
+  document.getElementById('autospeak-toggle')?.addEventListener('click', () => {
+    setTimeout(pushSettingsToServer, 100); // after classList toggles
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//  MODEL SWITCHER — Ollama dynamic list + single-active enforcement
+// ═══════════════════════════════════════════════════════════════════════
+
+const OLLAMA_ICONS = {
+  'qwen3': '🔮', 'qwen2.5-coder': '💻', 'qwen2.5': '🔮', 'qwen': '🔮',
+  'deepseek-r1': '🧠', 'deepseek-coder': '🐋', 'deepseek': '🐋',
+  'phi3': '🔬', 'phi': '🔬', 'llava': '👁️',
+  'llama2': '🦙', 'llama': '🦙',
+  'mistral-openorca': '🌪️', 'mistral': '🌪️',
+  'gemma': '💎',
+};
+
+function ollamaIcon(name) {
+  const n = name.toLowerCase();
+  for (const [fam, icon] of Object.entries(OLLAMA_ICONS)) {
+    if (n.startsWith(fam)) return icon;
+  }
+  return '🤖';
+}
+
+function sizeLabel(bytes) {
+  if (!bytes) return '';
+  if (bytes >= 1073741824) return (bytes/1073741824).toFixed(1) + 'GB';
+  return Math.round(bytes/1048576) + 'MB';
+}
+
+// Which model is currently active
+let _activeModel  = 'groq';
+let _activeKind   = 'cloud';   // 'cloud' | 'ollama'
+
+function selectModel(el) {
+  const model = el.dataset.model;
+  const kind  = el.dataset.kind;
+  if (model === _activeModel) { closeSheet('model-sheet'); return; }
+
+  // Uncheck all
+  document.querySelectorAll('.model-check').forEach(c => c.textContent = '');
+  // Check selected
+  const check = el.querySelector('.model-check');
+  if (check) check.textContent = '✓';
+
+  _activeModel = model;
+  _activeKind  = kind;
+
+  // Update pill in chat header
+  const pill = document.getElementById('active-provider-pill');
+  if (pill) {
+    const icon = kind === 'ollama' ? ollamaIcon(model) : '';
+    pill.textContent = (icon ? icon + ' ' : '') + model.toUpperCase() + ' ▾';
+  }
+
+  // Send switch command to backend
+  if (jarvisConnected && jarvisSocket) {
+    jarvisSocket.send(JSON.stringify({
+      type: 'model_switch',
+      model: model,
+      kind: kind,
+    }));
+  }
+
+  showToast(
+    kind === 'ollama'
+      ? '🔄 Switching to ' + model + ' (unloading previous…)'
+      : '✅ Switched to ' + model,
+    'ok'
+  );
+  closeSheet('model-sheet');
+}
+
+async function loadOllamaModels() {
+  const container = document.getElementById('ollama-model-list');
+  const placeholder = document.getElementById('ollama-model-placeholder');
+  if (placeholder) placeholder.textContent = 'Fetching from Ollama…';
+
+  // Remove old dynamically-added rows
+  container.querySelectorAll('.ollama-model-row').forEach(r => r.remove());
+
+  try {
+    // Try to reach Ollama via backend WS message; fall back to direct fetch
+    let models = null;
+
+    // Direct fetch (works if browser and Ollama share same host)
+    try {
+      const baseUrl = location.hostname === 'localhost' || location.hostname.startsWith('192.')
+        ? 'http://' + location.hostname + ':11434'
+        : null;
+      if (baseUrl) {
+        const resp = await fetch(baseUrl + '/api/tags', { signal: AbortSignal.timeout(4000) });
+        if (resp.ok) {
+          const data = await resp.json();
+          models = data.models || [];
+        }
+      }
+    } catch(_) {}
+
+    // If direct fetch failed, request from backend
+    if (!models && jarvisConnected && jarvisSocket) {
+      jarvisSocket.send(JSON.stringify({ type: 'list_ollama_models' }));
+      // _handleOllamaModelList() will be called when backend responds
+      if (placeholder) placeholder.textContent = 'Waiting for backend…';
+      return;
+    }
+
+    _renderOllamaModels(models || []);
+  } catch (err) {
+    if (placeholder) placeholder.textContent = '❌ Could not reach Ollama — run `ollama serve`';
+  }
+}
+
+function _renderOllamaModels(models) {
+  const container = document.getElementById('ollama-model-list');
+  const placeholder = document.getElementById('ollama-model-placeholder');
+  container.querySelectorAll('.ollama-model-row').forEach(r => r.remove());
+
+  if (!models.length) {
+    if (placeholder) placeholder.textContent = '🔴 No Ollama models found — run `ollama pull <model>`';
+    return;
+  }
+
+  if (placeholder) placeholder.style.display = 'none';
+
+  models.forEach((m, i) => {
+    const icon = ollamaIcon(m.name);
+    const size = sizeLabel(m.size || 0);
+    const isActive = m.name === _activeModel;
+    const isLast   = i === models.length - 1;
+
+    const row = document.createElement('div');
+    row.className = 'settings-row model-option ollama-model-row';
+    row.dataset.model = m.name;
+    row.dataset.kind  = 'ollama';
+    if (isLast) row.style.border = 'none';
+    row.innerHTML = `
+      <span style="font-size:15px;">${icon} ${m.name}
+        ${size ? '<span style="font-size:11px;color:var(--text-muted);margin-left:4px;">' + size + '</span>' : ''}
+      </span>
+      <span class="model-check" style="color:var(--accent3)">${isActive ? '✓' : ''}</span>
+    `;
+    row.onclick = () => selectModel(row);
+    container.appendChild(row);
+  });
+}
+
+// Called when backend sends ollama model list in response to list_ollama_models
+function _handleOllamaModelList(msg) {
+  _renderOllamaModels(msg.models || []);
+}
+
+// Auto-load Ollama models when sheet opens
+const _origOpenSheet = window.openSheet;
+window.openSheet = function(id) {
+  if (id === 'model-sheet') loadOllamaModels();
+  if (_origOpenSheet) _origOpenSheet(id);
+};
+
+// Mark the default active cloud option on page load
+document.addEventListener('DOMContentLoaded', () => {
+  const defaultEl = document.querySelector('.model-option[data-model="groq"]');
+  if (defaultEl) {
+    const c = defaultEl.querySelector('.model-check');
+    if (c) c.textContent = '✓';
+  }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+</script>
+</body>
+</html>

@@ -1,0 +1,148 @@
+# ============================================================
+# JARVIS AI OS — Tools Configuration
+# ============================================================
+# Defines which tool modules are enabled and their settings.
+# Tools are registered in tools/ subdirectories and invoked
+# via ToolRegistry by agents and cognition modules.
+# ============================================================
+
+tools:
+
+  # ----------------------------------------------------------
+  # File System Tools  (tools/file_tools/)
+  # Read, write, search, and manage files
+  # ----------------------------------------------------------
+  file_tools:
+    enabled: true
+    timeout_s: 30
+
+    # Root directory tools are allowed to access
+    # Use "." for project root, or an absolute path
+    allowed_root: "."
+
+    # File size limit for read operations (bytes)
+    max_read_bytes: 10485760   # 10 MB
+
+    # Extensions that can be written (empty = all allowed)
+    allowed_write_extensions:
+      - .txt
+      - .md
+      - .py
+      - .json
+      - .yaml
+      - .yml
+      - .csv
+      - .log
+
+    # Paths that tools must never touch
+    forbidden_paths:
+      - .env
+      - .venv
+      - __pycache__
+
+  # ----------------------------------------------------------
+  # Web Tools  (tools/web_tools/)
+  # HTTP requests, web search, URL fetching
+  # ----------------------------------------------------------
+  web_tools:
+    enabled: true
+    timeout_s: 30
+
+    # Max response size to read (bytes)
+    max_response_bytes: 5242880   # 5 MB
+
+    # Default headers sent with every request
+    default_headers:
+      User-Agent: "JARVIS-AI-OS/1.0"
+
+    # Search provider: serper | duckduckgo | none
+    search_provider: duckduckgo
+
+    # Max search results to return
+    max_search_results: 10
+
+    # Blocked domains (tools will refuse to fetch these)
+    blocked_domains: []
+
+  # ----------------------------------------------------------
+  # System Tools  (tools/system_tools/)
+  # Process management, system info, command execution
+  # ----------------------------------------------------------
+  system_tools:
+    enabled: true
+    timeout_s: 60
+
+    # Allow executing shell commands via tools
+    # Set to false in production for safety
+    allow_shell_exec: true
+
+    # Commands that are never allowed regardless of context
+    forbidden_commands:
+      - rm -rf
+      - format
+      - del /f /s /q
+      - shutdown
+      - reboot
+
+    # Max command output to capture (bytes)
+    max_output_bytes: 1048576   # 1 MB
+
+  # ----------------------------------------------------------
+  # Browser Tools  (tools/browser_tools/)
+  # Playwright-based browser automation
+  # Requires: pip install playwright && playwright install chromium
+  # ----------------------------------------------------------
+  browser_tools:
+    enabled: false   # Set true after: playwright install chromium
+
+    # Browser engine: chromium | firefox | webkit
+    browser: chromium
+
+    # Run browser without a visible window
+    headless: true
+
+    timeout_s: 60
+
+    # Max page load wait (milliseconds)
+    page_load_timeout_ms: 30000
+
+    # Capture screenshots on action
+    screenshot_on_action: false
+
+    # Directory to save screenshots (relative to data_dir)
+    screenshot_dir: screenshots
+
+  # ----------------------------------------------------------
+  # Utility Tools  (tools/utility_tools/)
+  # Text processing, formatting, math, date/time helpers
+  # ----------------------------------------------------------
+  utility_tools:
+    enabled: true
+    timeout_s: 10
+
+    # Max text length for processing tools (characters)
+    max_text_length: 100000
+
+    # Date/time format used in outputs
+    datetime_format: "%Y-%m-%d %H:%M:%S"
+
+    # Default timezone (IANA format)
+    timezone: UTC
+
+
+# ============================================================
+# Tool Registry Global Settings
+# ============================================================
+
+tool_registry:
+  # Default timeout for any tool not specifying its own (seconds)
+  default_timeout_s: 30
+
+  # Max concurrent tool invocations across the system
+  max_concurrent: 10
+
+  # Collect per-tool metrics (call count, latency, error rate)
+  metrics_enabled: true
+
+  # Log every tool invocation at DEBUG level
+  trace_enabled: false

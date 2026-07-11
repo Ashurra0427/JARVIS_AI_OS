@@ -1,0 +1,106 @@
+apps:
+
+  vscode:
+    name: "Visual Studio Code"
+    executable: "Code.exe"
+    aliases:
+      - code
+      - vscode
+      - visual studio code
+
+  chrome:
+    name: "Google Chrome"
+    executable: "chrome.exe"
+    aliases:
+      - chrome
+      - browser
+
+  edge:
+    name: "Microsoft Edge"
+    executable: "msedge.exe"
+    aliases:
+      - edge
+      - microsoft edge
+
+  brave:
+    name: "Brave Browser"
+    executable: "brave.exe"
+    aliases:
+      - brave
+      - brave browser
+
+  firefox:
+    name: "Mozilla Firefox"
+    executable: "firefox.exe"
+    aliases:
+      - firefox
+
+  powershell:
+    name: "PowerShell"
+    executable: "powershell.exe"
+    aliases:
+      - powershell
+      - ps
+
+  cmd:
+    name: "Command Prompt"
+    executable: "cmd.exe"
+    aliases:
+      - cmd
+      - command prompt
+      - terminal
+
+  explorer:
+    name: "File Explorer"
+    executable: "explorer.exe"
+    aliases:
+      - explorer
+      - file explorer
+      - files
+
+  discord:
+    name: "Discord"
+    executable: "Discord.exe"
+    aliases:
+      - discord
+
+  spotify:
+    name: "Spotify"
+    executable: "Spotify.exe"
+    aliases:
+      - spotify
+      - music
+
+  notepad:
+    name: "Notepad"
+    executable: "notepad.exe"
+    aliases:
+      - notepad
+
+  calculator:
+    name: "Calculator"
+    executable: "calc.exe"
+    aliases:
+      - calculator
+      - calc
+
+  taskmgr:
+    name: "Task Manager"
+    executable: "taskmgr.exe"
+    aliases:
+      - task manager
+      - taskmgr
+
+  paint:
+    name: "Paint"
+    executable: "mspaint.exe"
+    aliases:
+      - paint
+      - mspaint
+
+  vlc:
+    name: "VLC Media Player"
+    executable: "vlc.exe"
+    aliases:
+      - vlc
+      - media player

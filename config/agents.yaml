@@ -1,0 +1,124 @@
+# ============================================================
+# JARVIS AI OS — Agent Configuration
+# ============================================================
+# Controls per-agent behaviour, model assignment, and limits.
+# Agent names must match the name passed to BaseAgent.__init__
+# ============================================================
+
+agents:
+
+  # ----------------------------------------------------------
+  # Coordinator — routes goals to specialist agents
+  # ----------------------------------------------------------
+  coordinator:
+    enabled: true
+    model_provider: gemini
+    max_concurrent_goals: 10
+    goal_timeout_s: 300
+    description: >
+      Orchestrates all other agents. Receives user intents,
+      decomposes them into sub-goals, and delegates to specialists.
+
+  # ----------------------------------------------------------
+  # Research — web search, information gathering
+  # ----------------------------------------------------------
+  research:
+    enabled: true
+    model_provider: gemini
+    max_concurrent_goals: 3
+    goal_timeout_s: 120
+    description: >
+      Searches the web, retrieves documents, and synthesises
+      research findings. Uses Serper for search when available.
+
+  # ----------------------------------------------------------
+  # Engineering — code generation, debugging, deployment
+  # ----------------------------------------------------------
+  engineering:
+    enabled: true
+    model_provider: groq
+    max_concurrent_goals: 3
+    goal_timeout_s: 180
+    description: >
+      Writes, reviews, debugs, and tests code. Specialises in
+      Python, bash, and system-level scripting.
+
+  # ----------------------------------------------------------
+  # Analysis — data analysis, evaluation, reporting
+  # ----------------------------------------------------------
+  analysis:
+    enabled: true
+    model_provider: gemini
+    max_concurrent_goals: 3
+    goal_timeout_s: 120
+    description: >
+      Analyses data, evaluates outputs, compares options,
+      and produces structured reports.
+
+  # ----------------------------------------------------------
+  # Planning — task decomposition, scheduling, roadmaps
+  # ----------------------------------------------------------
+  planning:
+    enabled: true
+    model_provider: gemini
+    max_concurrent_goals: 3
+    goal_timeout_s: 120
+    description: >
+      Breaks down complex goals into actionable steps,
+      manages schedules, and builds project roadmaps.
+
+  # ----------------------------------------------------------
+  # Communication — drafting emails, messages, notifications
+  # ----------------------------------------------------------
+  communication:
+    enabled: true
+    model_provider: groq
+    max_concurrent_goals: 5
+    goal_timeout_s: 60
+    description: >
+      Drafts and sends emails, messages, and notifications.
+      Handles reply suggestions and tone adjustment.
+
+  # ----------------------------------------------------------
+  # Automation — workflows, scripts, triggers, scheduling
+  # ----------------------------------------------------------
+  automation:
+    enabled: true
+    model_provider: groq
+    max_concurrent_goals: 5
+    goal_timeout_s: 180
+    description: >
+      Designs and executes automation workflows, generates
+      scripts, configures triggers, and manages recurring tasks.
+
+  # ----------------------------------------------------------
+  # Vision — screenshots, OCR, screen understanding
+  # ----------------------------------------------------------
+  vision:
+    enabled: true
+    model_provider: gemini
+    max_concurrent_goals: 2
+    goal_timeout_s: 60
+    description: >
+      Captures and analyses screenshots, performs OCR,
+      and interprets visual content on screen.
+
+
+# ============================================================
+# Agent Runtime Settings (global defaults)
+# ============================================================
+
+agent_defaults:
+  # Max tokens for agent LLM completions
+  max_tokens: 1200
+
+  # Default system prompt prefix injected into all agents
+  system_prefix: >
+    You are a specialist module of JARVIS AI OS, an intelligent
+    personal assistant. Be concise, accurate, and actionable.
+
+  # How long to retain agent working memory entries (seconds)
+  working_memory_ttl_s: 3600
+
+  # Max items kept in working memory per agent
+  working_memory_max_items: 100

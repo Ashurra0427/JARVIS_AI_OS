@@ -1,0 +1,140 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-ai-os"
+version = "0.2.0"
+description = "JARVIS AI OS — event-driven AI operating system (agents, memory, cognition, perception, tools, HUD)."
+readme = "docs/Readme.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "Proprietary" }
+
+# NOTE on Python version: audioop (used by perception/speech/hotword.py and
+# microphone.py) was removed in Python 3.13. Stay on 3.11 or 3.12 until those
+# modules are migrated off audioop. This is enforced at runtime in server.py's
+# startup config validation (Phase 2.6) as well as declared here.
+
+# Core dependency list. requirements.txt remains the actively-maintained,
+# heavily-commented source of truth (install rationale, platform notes,
+# version-pin reasons); this list is kept in sync with it. If they ever
+# disagree, requirements.txt wins until this file is regenerated.
+dependencies = [
+  # Core / Config
+  "python-dotenv>=1.0.0",
+  "pyyaml>=6.0",
+  "structlog>=24.0.0",
+
+  # Server (server.py — FastAPI + WebSocket backend)
+  "fastapi>=0.111.0",
+  "uvicorn[standard]>=0.29.0",
+  "websockets>=12.0",
+
+  # LLM Providers
+  "groq>=0.9.0",
+  "google-genai>=0.8.0",
+  "anthropic>=0.25.0",
+
+  # HTTP
+  "aiohttp>=3.9.0",
+  "requests>=2.31.0",
+
+  # Memory
+  "aiosqlite>=0.19.0",
+  "chromadb>=0.5.0",
+  "sentence-transformers>=3.0.0",
+  "numpy>=1.26.0,<2.0",  # deepfilternet 0.5.6 requires numpy<2.0 — do NOT upgrade
+
+  # Speech — STT
+  "faster-whisper>=1.0.0",
+
+  # Speech — TTS
+  "edge-tts>=6.1.9",
+  "ffmpeg-python>=0.2.0",
+  "mutagen>=1.47.0",
+  "kokoro-onnx>=0.5.0",
+
+  # Wake Word / Hotword
+  "openwakeword>=0.6.0",
+
+  # Audio I/O
+  "sounddevice>=0.4.6",
+  "soundfile>=0.12.1",
+  "pygame>=2.5.0",
+  "PyAudio>=0.2.14",
+  "webrtcvad>=2.0.10",
+
+  # Vision / OCR / Screen
+  "mss>=9.0.1",
+  "Pillow>=10.0.0",
+  "pytesseract>=0.3.10",
+
+  # Desktop Automation
+  "pyautogui>=0.9.54",
+  "pyperclip>=1.8.2",
+  "pygetwindow>=0.0.9",
+  "psutil>=5.9.0",
+
+  # Browser Automation
+  "playwright>=1.44.0",
+
+  # UI Framework — PySide6 is the active HUD framework (interface/launch.py
+  # default). PyQt6 is intentionally NOT a core dependency: the two cannot
+  # coexist in the same venv, and PySide6 is canonical per the stabilization
+  # roadmap (Phase 2.3). Install the legacy-ui extra below only if you need
+  # the old PyQt6 interface/ path, and uninstall PySide6 first.
+  "PySide6>=6.7.0",
+  "websocket-client>=1.7.0",
+
+  # Deep Learning (local model inference)
+  "torch>=2.2.0",
+  "torchvision>=0.17.0",
+]
+
+[project.optional-dependencies]
+# Test / dev extras — install with: pip install -e ".[dev]"
+# or via: make install-dev
+dev = [
+  "httpx>=0.27.0",          # async HTTP test client (used by test_server.py)
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
+  "pytest-cov>=5.0.0",
+  "hypothesis>=6.100.0",
+  "ruff>=0.4.0",
+  "mypy>=1.10.0",
+]
+
+# Legacy PyQt6 UI (--legacy-ui mode). Conflicts with PySide6 — do not install
+# both in the same venv.
+legacy-ui = [
+  "PyQt6>=6.7.0",
+]
+
+# Windows-only extras for volume control and media transport controls.
+windows = [
+  "comtypes>=1.4.1",
+  "pycaw>=20240210",
+  "winsdk>=1.0.0b9",
+  "win10toast>=0.9",
+]
+
+# Optional, larger OCR engine (requires torch, already a core dep here, but
+# pulls in more weight than pytesseract).
+ocr-extra = [
+  "easyocr>=1.7.0",
+]
+
+[tool.setuptools]
+py-modules = ["server", "main", "start"]
+
+[tool.setuptools.packages.find]
+include = [
+  "actions*", "agents*", "boot*", "cognition*", "config*",
+  "integrations*", "interface*", "kernel*", "memory*", "models*",
+  "observability*", "perception*", "security*", "tools*",
+  "wakeword*", "workflows*",
+]
+exclude = ["tests*", "archive*", "test_chroma*", "logs*", "workspace*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

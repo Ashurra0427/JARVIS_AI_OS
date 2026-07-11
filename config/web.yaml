@@ -1,0 +1,31 @@
+urls:
+
+  youtube:
+    url: "https://youtube.com"
+
+  github:
+    url: "https://github.com"
+
+  chatgpt:
+    url: "https://chat.openai.com"
+
+  google:
+    url: "https://google.com"
+
+  gmail:
+    url: "https://mail.google.com"
+
+  drive:
+    url: "https://drive.google.com"
+
+  linkedin:
+    url: "https://linkedin.com"
+
+  x:
+    url: "https://x.com"
+
+  reddit:
+    url: "https://reddit.com"
+
+  stackoverflow:
+    url: "https://stackoverflow.com"

@@ -1,0 +1,3916 @@
+#!/usr/bin/env python3
+# ── Ensure the project root is always on sys.path ─────────────────────────────
+# Required on Windows (and some venv setups) where CWD is not automatically
+# added to sys.path when running `python server.
+
+
+from __future__ import annotations
+
+
+
+import sys as _sys, pathlib as _pathlib
+_PROJECT_ROOT = str(_pathlib.Path(__file__).resolve().parent)
+if _PROJECT_ROOT not in _sys.path:
+    _sys.path.insert(0, _PROJECT_ROOT)
+# ──────────────────────────────────────────────────────────────────────────────
+"""
+J.A.R.V.I.S  HTML HUD  ─  Backend Server
+==========================================
+Architecture
+------------
+  ┌─────────────────────────────────┐
+  │   jarvis.html  (HUD in browser) │
+  └──────────┬──────────────────────┘
+             │ WebSocket  ws://0.0.0.0:7788/ws
+             │ HTTP       http://0.0.0.0:7788
+  ┌──────────▼──────────────────────┐
+  │   server.py  (THIS FILE)        │
+  │   ─ FastAPI + uvicorn           │
+  │   ─ Real-time system metrics    │
+  │   ─ AI: Groq → Qwen-OVINO →     │
+  │      Gemini → Ollama (4-tier)   │
+  │      (qwen2.5:1.5b local)       │
+  │   ─ STT: Groq Whisper →         │
+  │      faster-whisper (local)     │
+  │   ─ TTS: edge-tts →             │
+  │      Kokoro ONNX (local)        │
+  │   ─ Memory (JSON + in-proc)     │
+  │   ─ File / terminal tools       │
+  └─────────────────────────────────┘
+
+Install
+-------
+  pip install fastapi "uvicorn[standard]" websockets psutil groq \
+              google-generativeai edge-tts aiohttp python-dotenv \
+              faster-whisper
+
+  # For Kokoro ONNX TTS (optional local fallback):
+  pip install kokoro-onnx soundfile numpy
+
+  # Ollama must be running locally with the model pulled:
+  #   ollama pull qwen2.5:1.5b
+
+Environment (.env or shell)
+---------------------------
+  GROQ_API_KEY=...
+  GEMINI_API_KEY=...
+  JARVIS_PORT=7788        (optional, default 7788)
+  OLLAMA_HOST=http://localhost:11434   (optional)
+  KOKORO_MODEL=kokoro-v1.0.onnx      (optional, path or filename)
+  KOKORO_VOICES=voices-v1.0.bin            (optional, path or filename)
+  FASTER_WHISPER_MODEL=base           (optional: tiny/base/small/medium)
+"""
+
+import asyncio
+import base64
+import io
+import json
+import logging
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+# ── Windows UTF-8 fix ──────────────────────────────────────────────────────
+# By default Windows opens stdout/stderr with the legacy console codepage
+# (e.g. CP1252), which raises UnicodeEncodeError for any character outside
+# that page (arrows, checkmarks, emoji). Setting PYTHONUTF8=1 at the
+# process level and reconfiguring both streams here ensures all logging
+# output (including daily_summary lines with '→') is encoded as UTF-8.
+# This must happen before any logging is initialised.
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONUTF8", "1")
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            try:
+                _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+            except Exception:
+                pass
+import psutil
+import uvicorn
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    """Shared on/off switch for the optional Phase-0 subsystems below.
+    Every new integration in this phase is gated by one of these so any
+    piece can be disabled instantly (without a code change) if it
+    misbehaves — set the named env var to "0"/"false"/"no" to turn it off.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in ("0", "false", "no")
+
+
+# ── Suppress noisy third-party library logs ───────────────────────────────────
+# httpx logs every HEAD request SentenceTransformers makes to HuggingFace.
+# transformers logs a benign "UNEXPECTED key" weight note on every ST load.
+# These are normal and expected — suppress to WARNING to keep server output clean.
+import logging as _logging
+for _lib in (
+    "httpx", "httpcore", "httpcore.http11",
+    "sentence_transformers", "sentence_transformers.base.model",
+    "transformers", "transformers.modeling_utils",
+    "huggingface_hub", "huggingface_hub.file_download",
+    "huggingface_hub.utils._validators",
+    "filelock",
+):
+    _logging.getLogger(_lib).setLevel(_logging.WARNING)
+
+# ── Centralized Config (Phase 0 — config/settings.py) ──────────────────────────
+# ConfigManager layers config/*.yaml + JARVIS_SECTION__KEY env vars into one
+# typed object. The existing os.getenv() constants further down in this file
+# are LEFT ALONE on purpose (they're the provider keys / ports / model names
+# that already work) — CONFIG is only consulted by the new Phase-0 pieces
+# below (logging, health monitor) so nothing currently working can regress
+# even if this fails to load.
+JARVIS_ENABLE_CONFIG_MANAGER = _env_flag("JARVIS_ENABLE_CONFIG_MANAGER", True)
+# Phase 0 — observability/health/health_monitor.py + observability/metrics/metrics_collector.py.
+# Declared up here (with the other Phase-0 flags) even though they're only
+# consumed inside on_startup(), so every subsystem flag for this phase lives
+# in one place and .env.example stays easy to keep in sync.
+JARVIS_ENABLE_HEALTH_MONITOR = _env_flag("JARVIS_ENABLE_HEALTH_MONITOR", True)
+JARVIS_ENABLE_METRICS_COLLECTOR = _env_flag("JARVIS_ENABLE_METRICS_COLLECTOR", True)
+
+# ── Phase 1 — Safety & Action Layer ───────────────────────────────────────────
+# JARVIS_ENABLE_ACTION_GUARD=true  → wires PolicyEngine + PermissionManager +
+#   ActionGuard as a mandatory checkpoint inside ToolRegistry.invoke(), so every
+#   tool call (not just terminal/code ones) passes through a policy check before
+#   executing.  Also starts TerminalManager (replaces raw subprocess.run in
+#   system_tools) and FileManager (enforces path sandboxing for file_tools).
+#   Deny-by-default for destructive actions; allow-by-default for safe reads.
+#   Set to "false" to disable the entire layer; behaviour reverts to pre-Phase-1.
+JARVIS_ENABLE_ACTION_GUARD: bool = _env_flag("JARVIS_ENABLE_ACTION_GUARD", True)
+
+# ── Phase 2 — Cognition & Multi-Agent Execution ────────────────────────────────
+# JARVIS_ENABLE_ORCHESTRATOR=true   → starts the Kernel Orchestrator with all
+#   specialized agent classes (ResearchAgent, EngineeringAgent, …) and the
+#   full cognition pipeline (ReasoningEngine → DecisionEngine → PlanningEngine).
+#   Chat requests that match a specialist agent are routed through the real
+#   agent rather than a prompt-engineered single LLM call.
+#   Set to "false" (or leave unset) to keep pre-Phase-2 behaviour unchanged.
+JARVIS_ENABLE_ORCHESTRATOR = _env_flag("JARVIS_ENABLE_ORCHESTRATOR", False)
+
+# ── Phase 3 — Perception Expansion ────────────────────────────────────────────
+# JARVIS_ENABLE_ALWAYS_LISTENING=true  → starts the always-on wake-word chain:
+#   MicrophoneEngine → NoiseCalibrator → HotwordDetector → WakeListener →
+#   VoiceCoordinator → STTRouter → TTSRouter + InterruptDetector.
+#   Runs ALONGSIDE the existing push-to-talk path — PTT and text-chat are
+#   UNCHANGED when this flag is off (default).  Set to "false" to keep
+#   push-to-talk only and skip all mic hardware init.
+JARVIS_ENABLE_ALWAYS_LISTENING = _env_flag("JARVIS_ENABLE_ALWAYS_LISTENING", False)
+
+# JARVIS_ENABLE_VISION_PIPELINE=true  → wires the real VisionPipeline +
+#   ActivityObserver. VisionPipeline publishes perception.vision.* events;
+#   ActivityObserver polls active windows/idle/processes and feeds ProactiveEngine
+#   when Phase 2 Orchestrator is active.
+#   Default: true — vision tools already call perception.vision internally.
+JARVIS_ENABLE_VISION_PIPELINE = _env_flag("JARVIS_ENABLE_VISION_PIPELINE", True)
+
+CONFIG = None
+if JARVIS_ENABLE_CONFIG_MANAGER:
+    try:
+        from config.settings import ConfigManager
+        CONFIG = ConfigManager()
+        CONFIG.load()
+    except Exception as _cfg_exc:
+        print(f"[JARVIS] ConfigManager init failed (non-fatal, falling back to os.getenv defaults): {_cfg_exc}")
+        CONFIG = None
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# P-09: Structured logging via structlog (matches the kernel's log format)
+from logging.handlers import RotatingFileHandler
+
+Path("logs").mkdir(exist_ok=True)
+
+_file_handler = RotatingFileHandler(
+    "logs/server.log", maxBytes=10 * 1024 * 1024, backupCount=3
+)
+_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s [JARVIS] %(levelname)s %(name)s — %(message)s")
+)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [JARVIS] %(levelname)s  %(name)s — %(message)s",
+    handlers=[logging.StreamHandler(), _file_handler],
+)
+
+# Phase 0: route every "jarvis.*" logger — server.py's own plus anything else
+# in the codebase that calls observability.logging.logger.get_logger()
+# (memory_router.py and health_monitor.py already do) — through ONE
+# consistently-formatted handler set that writes to the same logs/server.log
+# file. Without this, those other modules silently auto-configure themselves
+# with file_enabled=False the first time they're imported, and their log
+# lines never reach the file at all — only server.py's own lines did. The
+# root logging.basicConfig() above is left in place untouched: it's still
+# the safety net for third-party libraries (uvicorn, httpx, etc.) that log
+# under their own (non-"jarvis.") logger names.
+JARVIS_ENABLE_STRUCTURED_LOGGING = _env_flag("JARVIS_ENABLE_STRUCTURED_LOGGING", True)
+log = None
+if JARVIS_ENABLE_STRUCTURED_LOGGING:
+    try:
+        from observability.logging.logger import LoggerFactory, get_logger as _get_jarvis_logger
+        _log_cfg = CONFIG.config.logging if CONFIG is not None else None
+        LoggerFactory.configure(
+            level=(_log_cfg.level if _log_cfg else "INFO"),
+            fmt=(_log_cfg.format if _log_cfg else "text"),
+            file_enabled=True,
+            # Deliberately NOT _log_cfg.file_path ("logs/jarvis.log") — keeps
+            # writing to the file anyone already monitoring this server has
+            # pointed at. Unifying the *path* across entry points is a
+            # separate, explicit decision, not a side effect of this phase.
+            file_path="logs/server.log",
+            max_bytes=(_log_cfg.max_bytes if _log_cfg else 10 * 1024 * 1024),
+            backup_count=(_log_cfg.backup_count if _log_cfg else 5),
+            console=True,
+        )
+        log = _get_jarvis_logger("server")
+        log.info("Structured logging active (observability.logging.LoggerFactory)")
+    except Exception as _log_exc:
+        print(f"[JARVIS] observability logging init failed (non-fatal): {_log_exc}")
+        log = None
+
+if log is None:
+    # Fallback — unchanged from before Phase 0, in case the block above
+    # failed or was disabled via JARVIS_ENABLE_STRUCTURED_LOGGING=false.
+    try:
+        import structlog
+
+        structlog.configure(
+            processors=[
+                structlog.stdlib.add_log_level,
+                structlog.stdlib.add_logger_name,
+                structlog.processors.TimeStamper(fmt="%H:%M:%S", utc=False),
+                structlog.processors.StackInfoRenderer(),
+                structlog.dev.ConsoleRenderer(),
+            ],
+            context_class=dict,
+            logger_factory=structlog.stdlib.LoggerFactory(),
+        )
+        log = structlog.get_logger("jarvis.server")
+        log.info("Structured logging active", backend="structlog")
+    except ImportError:
+        log = logging.getLogger("jarvis.server")
+        log.info("structlog not installed — using standard logging (pip install structlog)")
+
+# ── Config ────────────────────────────────────────────────────────────────────
+PORT         = int(os.getenv("JARVIS_PORT", "7788"))
+HOST         = "0.0.0.0"
+GROQ_KEY     = os.getenv("GROQ_API_KEY", "")
+GEMINI_KEY   = os.getenv("GEMINI_API_KEY", "")
+OLLAMA_HOST  = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+
+# ── Ngrok / remote tunnel config ─────────────────────────────────────────────
+# Set NGROK_AUTHTOKEN in .env to enable automatic ngrok tunnel on startup.
+# The tunnel URL is served at GET /config/ws_url so the HTML HUD can
+# discover it without hardcoding.
+# Alternatively set NGROK_STATIC_URL to a fixed ngrok/cloudflare URL.
+NGROK_AUTHTOKEN  = os.getenv("NGROK_AUTHTOKEN", "")
+NGROK_STATIC_URL = os.getenv("NGROK_STATIC_URL", "")   # e.g. wss://catchy-wow-extras.ngrok-free.app/ws
+_ngrok_tunnel_url: str = ""   # populated by _start_ngrok() at startup
+
+GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", "llama-3.3-70b-versatile")
+
+# WebSocket authentication token.
+# Set JARVIS_SECRET in .env to a random string (e.g. `openssl rand -hex 32`).
+# Clients must pass ?token=<secret> on the WebSocket URL.
+# If unset, auth is DISABLED and a startup warning is logged.
+SERVER_SECRET = os.getenv("JARVIS_SECRET", "")
+
+# STT config
+FASTER_WHISPER_MODEL = os.getenv("FASTER_WHISPER_MODEL", "base")
+
+# Kokoro ONNX TTS config
+KOKORO_MODEL  = os.getenv("KOKORO_MODEL", "models/kokoro/kokoro-v1.0.onnx")
+KOKORO_VOICES = os.getenv("KOKORO_VOICES", "models/kokoro/voices-v1.0.bin")
+
+DATA_DIR  = Path("datastore"); DATA_DIR.mkdir(exist_ok=True)
+MEMORY_DB = DATA_DIR / "memory.json"
+
+# ── FastAPI app ───────────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Replaces deprecated @app.on_event('startup') / @app.on_event('shutdown')."""
+    await on_startup()
+    yield
+    await on_shutdown()
+
+
+app = FastAPI(title="JARVIS HUD Backend", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def _phase0_request_counter(request, call_next):
+    """
+    Phase 0 metrics: counts every HTTP request served, regardless of route.
+    METRICS_COLLECTOR is module-level and only populated once on_startup()
+    runs, so this is a no-op (and harmless) for any request that somehow
+    arrives before startup completes.
+    """
+    response = await call_next(request)
+    if METRICS_COLLECTOR is not None:
+        METRICS_COLLECTOR.increment("http_requests_total")
+    return response
+
+@app.get("/")
+def root():
+    return FileResponse("./webpage/mobile_hud/jarvisV5_mobile.html")
+
+@app.get("/webpage/mobile_hud/jarvisV5_mobile.html")
+def get_jarvis_html():
+    return FileResponse("./webpage/jarvisV3.html")
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(status_code=204)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MEMORY STORE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MemoryStore:
+    def __init__(self, path: Path):
+        self.path = path
+        self._data: dict[str, Any] = {"episodes": [], "semantic": {}}
+        self._lock = asyncio.Lock()  # guards concurrent async writes
+        self._load()
+
+    def _load(self):
+        if self.path.exists():
+            try:
+                self._data = json.loads(self.path.read_text())
+            except Exception:
+                pass
+
+    def _save(self):
+        # Write to a temp file then rename for atomic replacement
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self._data, indent=2))
+        tmp.replace(self.path)
+
+    async def add_episode(self, role: str, agent: str, content: str):
+        async with self._lock:
+            ep = {
+                "id": str(uuid.uuid4())[:8],
+                "ts": time.time(),
+                "role": role,
+                "agent": agent,
+                "content": content[:400],
+            }
+            self._data["episodes"].append(ep)
+            if len(self._data["episodes"]) > 200:
+                self._data["episodes"] = self._data["episodes"][-200:]
+            self._save()
+            return ep
+
+    async def store_semantic(self, key: str, value: str):
+        async with self._lock:
+            self._data["semantic"][key] = {"value": value, "ts": time.time()}
+            self._save()
+
+    def recall_recent(self, n: int = 10) -> list[dict]:
+        return self._data["episodes"][-n:]
+
+    def recall_semantic(self, query: str) -> list[tuple[str, str]]:
+        q = query.lower()
+        return [(k, v["value"]) for k, v in self._data["semantic"].items()
+                if q in k.lower() or q in v["value"].lower()]
+
+    def stats(self) -> dict:
+        return {
+            "episodes": len(self._data["episodes"]),
+            "semantic": len(self._data["semantic"]),
+        }
+
+
+memory = MemoryStore(MEMORY_DB)
+
+# ── Tool Registry + MemoryRouter bridge (additive integration) ─────────────────
+# These give the HUD real browser automation (browser.*/web.* tools) and a real
+# semantic/episodic/vector memory backend, without disturbing the existing
+# chat/voice/metrics pipeline above.
+TOOL_REGISTRY: Any = None
+MEMORY_ROUTER: Any = None
+TASK_PLANNER: Any = None
+_browser_tools: Any = None  # P-12: Playwright BrowserTools singleton
+
+# ── New integrated subsystems ──────────────────────────────────────────────────
+ACKNOWLEDGEMENT_ENGINE: Any = None   # backchannel filler-phrase TTS
+DAILY_SUMMARY: Any = None            # daily event aggregator / compressor
+EMBEDDING_SERVICE: Any = None        # text embedding service (ST → API → TF-IDF)
+
+# ── Shared in-process EventBus + canonical voice engines ───────────────────────
+# server.py used to hand-roll its own Groq/edge-tts/faster-whisper/Kokoro calls
+# (see git history). That duplicated perception/speech/stt.py and
+# perception/voice/tts.py — which are documented as "THE ONLY location" audio
+# is transcribed/synthesised — and had drifted from them: Groq transcriptions
+# were always mislabeled "en" regardless of the language actually spoken,
+# which broke language-aware TTS voice selection for every reply. STT_ENGINE
+# and TTS_ENGINE below are real instances of those canonical classes, created
+# once in on_startup() and shared by every WebSocket connection, so there is
+# a single STT/TTS implementation regardless of which JARVIS entry point
+# (desktop Bootstrap or this FastAPI server) is running.
+_SERVER_BUS: Any = None
+STT_ENGINE: Any = None
+TTS_ENGINE: Any = None
+
+# ── Phase 0 observability ──────────────────────────────────────────────────
+HEALTH_MONITOR: Any = None    # observability/health/health_monitor.py — real /health checks
+METRICS_COLLECTOR: Any = None  # observability/metrics/metrics_collector.py — real /metrics counters
+
+# ── Phase 1 — Safety & Action Layer ──────────────────────────────────────────
+ACTION_GUARD: Any = None   # actions/security/security_integration.py singleton
+
+# ── Phase 2 — Kernel Orchestrator (multi-agent cognitive layer) ────────────
+# None when JARVIS_ENABLE_ORCHESTRATOR=false (default). When enabled, this is
+# the single Orchestrator instance that owns all specialist agents. It shares
+# _SERVER_BUS, MEMORY_ROUTER, TOOL_REGISTRY, and the model router with the
+# rest of server.py — no second copies of any of those.
+ORCHESTRATOR: Any = None
+
+# ── Phase 3 — Perception Expansion ─────────────────────────────────────────
+# Always-listening voice pipeline components. All None when
+# JARVIS_ENABLE_ALWAYS_LISTENING=false (default).  When enabled, they share
+# _SERVER_BUS and STT_ENGINE/TTS_ENGINE — no second copies of anything.
+WAKE_WORD_MANAGER: Any = None    # wakeword/manager.py — runtime enable/disable
+VOICE_COORDINATOR: Any = None   # perception/speech/voice_coordinator.py
+ACTIVITY_OBSERVER: Any = None   # perception/observation/activity_observer.py
+VISION_PIPELINE: Any = None     # perception/vision/vision_pipeline.py
+# ═══════════════════════════════════════════════════════════════════════════════
+
+SETTINGS_PATH = DATA_DIR / "ui_settings.json"
+RUNTIME_SETTINGS: dict[str, Any] = {}
+
+
+def _load_runtime_settings() -> dict[str, Any]:
+    try:
+        if SETTINGS_PATH.exists():
+            return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def apply_settings(settings: dict[str, Any]) -> None:
+    """
+    Apply settings pushed from the SettingsPanel.
+    Persists to datastore/ui_settings.json and updates runtime knobs that
+    server.py itself cares about (voice, default agent, TTS voice, etc.)
+    """
+    RUNTIME_SETTINGS.update(settings or {})
+    try:
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_PATH.write_text(json.dumps(RUNTIME_SETTINGS, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.warning(f"Failed to persist settings: {e}")
+
+    voice = (settings or {}).get("voice", {})
+    if "tts_voice" in voice:
+        # tts_voice is an explicit edge-tts voice id override (e.g.
+        # "en-US-AndrewMultilingualNeural"). synthesize_speech() reads it
+        # from RUNTIME_SETTINGS at call time and, if set, uses it instead
+        # of the language-based automatic voice selection.
+        pass
+
+    # Settings panel's "Ollama → Fallback Model" picker maps directly to
+    # ModelRouter's emergency_model tier (the safety-net used when both
+    # Groq and Gemini fail — see model_router.py's v4.0 docstring). Make
+    # the setting live instead of inert: push it straight to the router's
+    # emergency provider. Scheduled as a background task (rather than
+    # awaited here) because apply_settings() is called synchronously from
+    # both a WS handler and a REST endpoint, and switch_model() can take
+    # up to ~90s on a cold model load — that shouldn't block the settings
+    # save/ack round-trip.
+    ollama_settings = (settings or {}).get("ollama", {})
+    fallback_model = (ollama_settings or {}).get("fallback_model", "")
+    if fallback_model:
+        async def _apply_emergency_model(model: str) -> None:
+            try:
+                from models.router.model_router import get_router
+                router = get_router()
+                if model == getattr(router, "_emergency_model", None):
+                    return
+                ok = await router._emergency_provider.switch_model(model)
+                if ok:
+                    router._emergency_model = model
+                    log.info(f"Emergency model updated from settings: {model}")
+                else:
+                    log.warning(f"Emergency model switch failed (not pulled?): {model}")
+            except Exception as exc:
+                log.warning(f"Failed to apply emergency model setting: {exc}")
+
+        try:
+            asyncio.create_task(_apply_emergency_model(fallback_model))
+        except RuntimeError:
+            # No running event loop (e.g. called outside an async context) —
+            # the setting is still persisted above; it'll take effect once
+            # something else triggers a switch, or on next boot.
+            log.debug("apply_settings: no running loop — emergency model update deferred")
+
+    log.info(f"Settings updated: {list((settings or {}).keys())}")
+
+
+RUNTIME_SETTINGS = _load_runtime_settings()
+
+from models.switcher.model_switcher import ModelSwitcher
+
+# Module-level handle to the ModelSwitcher singleton, used by the
+# model_switch / list_ollama_models / model_state / model_cycle WS
+# handlers below. Declared here (before those handlers are defined) so
+# the dependency is explicit rather than appearing for the first time
+# hundreds of lines later. None until on_startup() (or the first handler
+# that needs it) lazily calls ModelSwitcher.get_instance() — that lazy
+# init is safe even if a WS message arrives before startup completes.
+model_switcher: ModelSwitcher | None = None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AI PROVIDERS  ─  Groq → Qwen-OpenVINO (local) → Gemini → Ollama (local)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Single source of truth — all agent prompts and aliases live in agents/agent_prompts.py
+from agents.agent_prompts import AGENT_PROMPTS, AGENT_ALIASES, resolve_agent as _resolve_agent
+
+
+_histories: dict[str, list[dict]] = {k: [] for k in AGENT_PROMPTS}
+
+# Track which provider served the last request (for UI badge)
+_last_provider: str = "NONE"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PER-AGENT METRICS  ─  drives the AgentWorkspace roster + detail panel
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Mirrors the metrics_payload() shapes returned by each agent in agents/*.py,
+# so interface/workspaces/agent_workspace.py can render them without changes.
+
+AGENT_REGISTRY: dict[str, dict[str, Any]] = {
+    "oracle": {
+        "agent_id": str(uuid.uuid4()), "display": "ORACLE", "number": "01",
+        "status": "idle", "tasks_done": 0, "tasks_failed": 0,
+        "metrics": {"tasks_queued": 0, "tasks_in_progress": 0, "efficiency_pct": 92},
+        "current_task": "",
+    },
+    "athena": {
+        "agent_id": str(uuid.uuid4()), "display": "ATHENA", "number": "02",
+        "status": "idle", "tasks_done": 0, "tasks_failed": 0,
+        "metrics": {"sources_scanned": 0, "new_findings": 0, "accuracy_pct": 94},
+        "current_task": "",
+    },
+    "vision_eng": {
+        "agent_id": str(uuid.uuid4()), "display": "VISION", "number": "03",
+        "status": "idle", "tasks_done": 0, "tasks_failed": 0,
+        "metrics": {"files_analyzed": 0, "code_lines_written": 0, "bugs_fixed": 0, "performance_pct": 96},
+        "current_task": "",
+    },
+    "herald": {
+        "agent_id": str(uuid.uuid4()), "display": "HERALD", "number": "04",
+        "status": "idle", "tasks_done": 0, "tasks_failed": 0,
+        "metrics": {"pages_visited": 0, "data_extracted_mb": 0.0, "sessions": 0, "bandwidth_mbps": 32.4},
+        "current_task": "",
+    },
+    "friday": {
+        "agent_id": str(uuid.uuid4()), "display": "FRIDAY", "number": "05",
+        "status": "idle", "tasks_done": 0, "tasks_failed": 0,
+        "metrics": {"workflows": 12, "automations": 28, "success_rate_pct": 98, "runs_completed": 0},
+        "current_task": "",
+    },
+    "ashura": {
+        "agent_id": str(uuid.uuid4()), "display": "ASHURA", "number": "06",
+        "status": "idle", "tasks_done": 0, "tasks_failed": 0,
+        "metrics": {"memories_stored": 18452, "recall_accuracy_pct": 97, "optimization_pct": 98},
+        "current_task": "",
+    },
+    "coordinator": {
+        "agent_id": str(uuid.uuid4()), "display": "COORDINATOR", "number": "CO",
+        "status": "idle", "tasks_done": 0, "tasks_failed": 0,
+        "metrics": {"tasks_done": 0, "tasks_failed": 0},
+        "current_task": "",
+    },
+}
+
+
+def _agent_metrics_message(agent_id: str) -> dict:
+    a = AGENT_REGISTRY[agent_id]
+    return {
+        "type":         "agent_metrics",
+        "agent_name":   agent_id,
+        "agent_id":     a["agent_id"],
+        "current_task": a["current_task"],
+        "status":       a["status"],
+        "metrics": {
+            "tasks_done":   a["tasks_done"],
+            "tasks_failed": a["tasks_failed"],
+            **a["metrics"],
+        },
+    }
+
+
+def _mark_agent_working(agent_id: str, task_desc: str = "") -> None:
+    a = AGENT_REGISTRY.get(agent_id)
+    if not a:
+        return
+    a["status"] = "working"
+    a["current_task"] = task_desc[:60]
+
+
+def _mark_agent_done(agent_id: str, success: bool = True) -> None:
+    a = AGENT_REGISTRY.get(agent_id)
+    if not a:
+        return
+    if success:
+        a["tasks_done"] += 1
+        a["status"] = "idle"
+        # Nudge agent-specific metrics so the UI feels alive
+        m = a["metrics"]
+        if agent_id == "oracle":
+            m["tasks_in_progress"] = max(0, m["tasks_in_progress"] - 0)
+            m["tasks_queued"] = max(0, m["tasks_queued"])
+        elif agent_id == "athena":
+            m["sources_scanned"] += 1
+            m["new_findings"] += 1
+        elif agent_id == "vision_eng":
+            m["files_analyzed"] += 1
+            m["code_lines_written"] += 12
+        elif agent_id == "herald":
+            m["pages_visited"] += 1
+            m["sessions"] += 1
+        elif agent_id == "friday":
+            m["runs_completed"] += 1
+        elif agent_id == "ashura":
+            m["memories_stored"] += 1
+        elif agent_id == "coordinator":
+            m["tasks_done"] = a["tasks_done"]
+    else:
+        a["tasks_failed"] += 1
+        a["status"] = "error"
+        if agent_id == "coordinator":
+            a["metrics"]["tasks_failed"] = a["tasks_failed"]
+
+
+# P-19: Last Groq usage — populated by _call_groq, read in chat reply to show cost
+_groq_last_usage: dict[str, int] = {}
+
+
+async def _call_groq(agent: str, messages: list[dict], system: str) -> str:
+    import httpx
+    from groq import AsyncGroq
+
+    # ── Network/proxy hardening ─────────────────────────────────────────
+    # A bare AsyncGroq(api_key=...) builds its own httpx.AsyncClient with
+    # default timeouts (which can hang) and `trust_env=True`, so it WILL
+    # pick up HTTP_PROXY / HTTPS_PROXY / NO_PROXY from the environment
+    # automatically. If those vars point at a dead/unreachable proxy, or
+    # a corporate proxy with a self-signed cert, every call fails fast
+    # with the generic "Connection error." message and no detail.
+    #
+    # Optional .env overrides for this exact situation:
+    #   GROQ_BASE_URL=https://api.groq.com          (custom endpoint/proxy)
+    #   GROQ_HTTP_PROXY=http://user:pass@host:port  (force a specific proxy)
+    #   GROQ_VERIFY_SSL=false                       (skip TLS verification
+    #                                                 — corporate MITM proxy
+    #                                                 with self-signed CA)
+    base_url   = os.getenv("GROQ_BASE_URL") or None
+    proxy_url  = os.getenv("GROQ_HTTP_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or None
+    verify_ssl = os.getenv("GROQ_VERIFY_SSL", "true").strip().lower() not in ("0", "false", "no")
+
+    http_client = httpx.AsyncClient(
+        proxy=proxy_url,
+        verify=verify_ssl,
+        timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0),
+        trust_env=True,
+    )
+
+    try:
+        client = AsyncGroq(
+            api_key=GROQ_KEY,
+            base_url=base_url,
+            timeout=30.0,
+            max_retries=2,
+            http_client=http_client,
+        )
+        resp = await client.chat.completions.create(
+            model=GROQ_CHAT_MODEL,
+            max_tokens=2048,
+            messages=[{"role": "system", "content": system}] + messages,
+        )
+        # P-19: Capture token usage for cost tracking
+        if resp.usage:
+            _groq_last_usage["prompt"]     = resp.usage.prompt_tokens
+            _groq_last_usage["completion"] = resp.usage.completion_tokens
+            _groq_last_usage["total"]      = resp.usage.total_tokens
+        else:
+            _groq_last_usage.clear()
+        return resp.choices[0].message.content
+    except Exception as e:
+        # The groq SDK collapses ALL httpx connection failures (DNS, TLS,
+        # proxy refused, timeout, etc.) into the generic message
+        # "Connection error." — the *real* reason is on __cause__.
+        # Surface it so logs/UI show something actionable instead of a
+        # one-line dead end.
+        cause = e.__cause__ or e.__context__
+        detail = f"{e} (cause: {type(cause).__name__}: {cause})" if cause and cause is not e else str(e)
+        log.debug(f"GROQ raw error detail: {detail}")
+        raise RuntimeError(f"GROQ {type(e).__name__}: {detail}") from e
+    finally:
+        await http_client.aclose()
+
+
+async def _call_groq_streaming(
+    agent: str, messages: list[dict], system: str, ws: "WebSocket"
+) -> str:
+    """
+    P-10: Stream Groq response token-by-token over WebSocket.
+    Sends {"type": "chat_stream", "delta": "...", "agent": agent} per chunk,
+    then {"type": "chat_stream_end", "agent": agent} when done.
+    Returns the full accumulated response text.
+    """
+    import httpx
+    from groq import AsyncGroq
+
+    base_url  = os.getenv("GROQ_BASE_URL") or None
+    proxy_url = os.getenv("GROQ_HTTP_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or None
+    verify_ssl = os.getenv("GROQ_VERIFY_SSL", "true").strip().lower() not in ("0", "false", "no")
+
+    http_client = httpx.AsyncClient(
+        proxy=proxy_url,
+        verify=verify_ssl,
+        timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0),
+        trust_env=True,
+    )
+    full_text = ""
+    try:
+        client = AsyncGroq(
+            api_key=GROQ_KEY,
+            base_url=base_url,
+            timeout=60.0,
+            max_retries=1,
+            http_client=http_client,
+        )
+        stream = await client.chat.completions.create(
+            model=GROQ_CHAT_MODEL,
+            max_tokens=2048,
+            messages=[{"role": "system", "content": system}] + messages,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            if delta:
+                full_text += delta
+                await manager.send(ws, {"type": "chat_stream", "delta": delta, "agent": agent})
+        await manager.send(ws, {"type": "chat_stream_end", "agent": agent})
+        return full_text
+    except Exception as e:
+        cause = e.__cause__ or e.__context__
+        detail = f"{e} (cause: {type(cause).__name__}: {cause})" if cause and cause is not e else str(e)
+        raise RuntimeError(f"GROQ streaming {type(e).__name__}: {detail}") from e
+    finally:
+        await http_client.aclose()
+# models/local/qwen_openvino/qwen_openvino_provider.py + IR files in
+# models/local/qwen_coder/. Lazily imported/constructed so that machines
+# without optimum-intel/openvino installed (or without the IR files) don't
+# pay any import cost and simply skip this tier via the normal
+# provider-loop exception handling in call_ai().
+_qwen_ov_provider: Any = None
+
+# Cache Gemini GenerativeModel objects keyed by system-prompt hash.
+# Avoids re-configuring the SDK and rebuilding connection pools on every call.
+_gemini_models: dict[int, Any] = {}
+
+
+def _get_qwen_openvino_provider():
+    """Lazily construct the QwenOpenVINOProvider singleton.
+
+    FIX: The default device changed from "AUTO" to "HETERO:GPU,CPU".
+
+    "AUTO" lets OpenVINO decide at runtime but places the full model on
+    whichever device it prefers (usually CPU-only on machines without a
+    discrete dGPU driver), which hammers RAM and CPU threads and causes
+    system sluggishness during inference.
+
+    "HETERO:GPU,CPU" distributes layers: GPU (iGPU / dGPU) runs the
+    compute-heavy attention blocks; CPU handles layers the GPU can't
+    accelerate (e.g. unsupported ops).  This spreads the load, lowers
+    per-core CPU utilisation, and reduces memory pressure because GPU VRAM
+    absorbs the largest weight tensors.
+
+    Override via:
+      QWEN_OPENVINO_DEVICE=AUTO          (original behaviour)
+      QWEN_OPENVINO_DEVICE=CPU           (CPU-only, no GPU)
+      QWEN_OPENVINO_DEVICE=GPU           (GPU-only — needs full GPU support)
+      QWEN_OPENVINO_DEVICE=HETERO:GPU,CPU  (default — GPU-primary + CPU spill)
+      QWEN_OPENVINO_DEVICE=HETERO:CPU,GPU  (CPU-primary, lighter GPU use)
+    """
+    global _qwen_ov_provider
+    if _qwen_ov_provider is None:
+        from models.local.qwen_openvino.qwen_openvino_provider import QwenOpenVINOProvider
+
+        models_cfg = RUNTIME_SETTINGS.get("models", {})
+        device = (
+            os.getenv("QWEN_OPENVINO_DEVICE")
+            or models_cfg.get("qwen_local_device")
+            or "HETERO:GPU,CPU"   # FIX: GPU-primary with CPU spill-over
+        )
+
+        # Also apply OpenVINO per-device thread caps so the model doesn't
+        # monopolise every CPU core while GPU handles the heavy work.
+        # These are passed as ov_config via an env-based override dict so
+        # QwenOpenVINOProvider.load_model() picks them up automatically.
+        ov_thread_env = os.getenv("QWEN_OPENVINO_CPU_THREADS")
+        if ov_thread_env is None and "CPU" in device:
+            import psutil as _psu
+            # Leave at least 2 cores free for the FastAPI event loop
+            cpu_threads = max(1, (_psu.cpu_count(logical=True) or 4) - 2)
+            os.environ.setdefault("QWEN_OPENVINO_CPU_THREADS", str(cpu_threads))
+
+        _qwen_ov_provider = QwenOpenVINOProvider(device=device)
+    return _qwen_ov_provider
+
+
+def _qwen_openvino_enabled() -> bool:
+    """Allow disabling this tier via .env or the settings panel without
+    touching the provider chain code.
+
+    Defaults to ENABLED — this matches the documented 4-tier chain
+    (Groq -> Qwen-OpenVINO -> Gemini -> Ollama) in this file's header and
+    config/models.yaml's `llm_providers.qwen_local.enabled: true`. If the
+    OpenVINO IR model files or optimum-intel/openvino packages are absent,
+    _call_qwen_openvino() raises (via QwenOpenVINOProvider.complete()) and
+    this tier is skipped exactly like any other unavailable provider —
+    so enabling it by default is safe even on machines without the model.
+    """
+    models_cfg = RUNTIME_SETTINGS.get("models", {})
+    env_val = os.getenv("QWEN_OPENVINO_ENABLED")
+    if env_val is not None:
+        return env_val.strip().lower() not in ("0", "false", "no")
+    return bool(models_cfg.get("qwen_local_enabled", True))
+
+
+async def _call_qwen_openvino(agent: str, messages: list[dict], system: str) -> str:
+    """Call the local OpenVINO-IR Qwen2.5-Coder model (offline, no network)."""
+    from models.providers.base_provider import ModelMessage, ModelRequest
+
+    provider = _get_qwen_openvino_provider()
+
+    model_messages = [ModelMessage(role="system", content=system)]
+    for m in messages:
+        model_messages.append(ModelMessage(role=m["role"], content=m["content"]))
+
+    timeout_s = int(os.getenv("QWEN_OPENVINO_TIMEOUT_S", "60"))
+    request = ModelRequest(
+        messages=model_messages,
+        model="qwen2.5-coder-openvino",
+        max_tokens=1024,
+        temperature=0.2,
+        timeout_s=timeout_s,
+    )
+    response = await provider.complete(request)
+    return response.content
+
+
+async def _call_gemini(agent: str, messages: list[dict], system: str) -> str:
+    # Uses the new google-genai SDK (pip install google-genai)
+    # which replaces the deprecated google-generativeai package.
+    from google import genai as _genai
+    from google.genai import types as _gtypes
+
+    client = _genai.Client(api_key=GEMINI_KEY)
+
+    # Build the conversation contents list
+    contents: list = []
+    for m in messages:
+        role = "user" if m["role"] == "user" else "model"
+        contents.append(_gtypes.Content(
+            role=role,
+            parts=[_gtypes.Part.from_text(text=m["content"])],
+        ))
+
+    config = _gtypes.GenerateContentConfig(
+        system_instruction=system,
+        max_output_tokens=2048,
+        temperature=0.7,
+    )
+
+    # Cache key still used to skip re-instantiating config objects
+    key = hash(system)
+    _gemini_models[key] = True  # sentinel — client is stateless in new SDK
+
+    resp = await asyncio.to_thread(
+        client.models.generate_content,
+        model="gemini-2.5-flash",
+        contents=contents,
+        config=config,
+    )
+    return resp.text
+
+
+async def _call_ollama(agent: str, messages: list[dict], system: str) -> str:
+    """Call local Ollama (final fallback) via HTTP (no extra SDK needed).
+
+    Now the LAST tier in the chain (Groq -> Qwen-OpenVINO -> Gemini -> Ollama).
+    Default timeout is 90s, configurable via OLLAMA_TIMEOUT_S. A *cold* Ollama
+    model load (qwen3:4b not yet resident in memory) can easily take 45-90s+
+    on modest hardware before the first token — that's why this was timing
+    out at the old 45s default. `_prewarm_ollama()` (called once at startup,
+    fire-and-forget) sends a trivial request so the model is already loaded
+    into memory by the time a real user message arrives — after that,
+    requests are fast and well within this timeout.
+    """
+    import aiohttp
+    url = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "stream": False,
+        "messages": [{"role": "system", "content": system}] + messages,
+    }
+    timeout_s = int(os.getenv("OLLAMA_TIMEOUT_S", "90"))
+    timeout = aiohttp.ClientTimeout(total=timeout_s)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(url, json=payload) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"Ollama HTTP {resp.status}: {body[:200]}")
+            data = await resp.json()
+            # Ollama chat response format
+            return data["message"]["content"]
+
+
+async def _build_file_context(paths: list[str], max_chars_per_file: int = 4000,
+                               max_total_chars: int = 12000) -> str:
+    """
+    Read attached files and format their content for inclusion in the LLM
+    prompt. Text-like files are read directly; binary/unsupported files are
+    listed by name/size only so the model still knows they were attached.
+    """
+    import os as _os
+
+    _TEXT_EXTS = {
+        ".txt", ".md", ".markdown", ".py", ".js", ".ts", ".tsx", ".jsx",
+        ".json", ".yaml", ".yml", ".csv", ".tsv", ".html", ".css", ".xml",
+        ".log", ".ini", ".cfg", ".toml", ".sh", ".bat", ".sql",
+    }
+
+    sections: list[str] = []
+    total = 0
+
+    for path in paths:
+        try:
+            name = _os.path.basename(path)
+            ext = _os.path.splitext(path)[1].lower()
+            if not _os.path.exists(path):
+                sections.append(f"--- FILE: {name} ---\n[File not found: {path}]")
+                continue
+
+            size = _os.path.getsize(path)
+
+            if ext in _TEXT_EXTS:
+                try:
+                    from tools.file_tools.file_tools import file_read
+                    result = await asyncio.to_thread(file_read, path)
+                    content = result.get("content", "")
+                except Exception as e:
+                    sections.append(f"--- FILE: {name} ({size} bytes) ---\n[Could not read file: {e}]")
+                    continue
+
+                if len(content) > max_chars_per_file:
+                    content = content[:max_chars_per_file] + "\n...[truncated]"
+
+                remaining = max_total_chars - total
+                if remaining <= 0:
+                    sections.append(f"--- FILE: {name} ---\n[Skipped — total attachment size limit reached]")
+                    continue
+                if len(content) > remaining:
+                    content = content[:remaining] + "\n...[truncated]"
+
+                total += len(content)
+                sections.append(f"--- FILE: {name} ---\n{content}")
+            else:
+                # Binary / unsupported — describe it so the model is aware
+                sections.append(
+                    f"--- FILE: {name} ({size} bytes) ---\n"
+                    f"[Binary or unsupported file type '{ext}' — content not included. "
+                    f"Path: {path}]"
+                )
+        except Exception as e:
+            sections.append(f"--- FILE: {path} ---\n[Error reading file: {e}]")
+
+    if not sections:
+        return ""
+
+    return "The user attached the following file(s):\n\n" + "\n\n".join(sections)
+
+
+# ── Provider rate-limit cooldown cache ───────────────────────────────────────
+# Groq (daily TPD limit) and Gemini (free-tier daily request limit) both
+# return 429s that won't clear for minutes/hours. Without this, every chat
+# message pays a full round-trip to a provider we already KNOW is exhausted
+# before falling through to the next tier. Track a per-provider "don't try
+# again until <ts>" cooldown, parsed from the error message when possible.
+_provider_cooldowns: dict[str, float] = {}
+
+_RETRY_DELAY_RE = re.compile(r"retry_delay\s*\{\s*seconds:\s*(\d+)", re.IGNORECASE)
+_TRY_AGAIN_RE   = re.compile(r"try again in\s+(?:(\d+)\s*m)?\s*([\d.]+)\s*s", re.IGNORECASE)
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    s = f"{type(exc).__name__} {exc}".lower()
+    return (
+        "429" in s
+        or "rate_limit" in s
+        or "ratelimiterror" in s
+        or "too many requests" in s
+        or "quota" in s
+        or "resourceexhausted" in s
+    )
+
+
+def _extract_retry_seconds(err: str) -> float | None:
+    """Best-effort extraction of a provider-suggested retry delay."""
+    m = _RETRY_DELAY_RE.search(err)          # Gemini: "retry_delay { seconds: 7 }"
+    if m:
+        return float(m.group(1))
+    m = _TRY_AGAIN_RE.search(err)            # Groq: "Please try again in 13m14.016s"
+    if m:
+        minutes = float(m.group(1) or 0)
+        seconds = float(m.group(2) or 0)
+        return minutes * 60 + seconds
+    return None
+
+
+def _cooldown_remaining(name: str) -> float:
+    until = _provider_cooldowns.get(name)
+    if until is None:
+        return 0.0
+    remaining = until - time.time()
+    return remaining if remaining > 0 else 0.0
+
+
+def _maybe_set_cooldown(name: str, exc: Exception) -> None:
+    if not _is_rate_limit_error(exc):
+        return
+    err = str(exc)
+    retry_s = _extract_retry_seconds(err)
+    if retry_s is None:
+        retry_s = 60.0  # generic default if no retry hint found
+    # Cap so a misparsed huge number (or a "per day" limit with no usable
+    # retry hint) doesn't blackhole a provider for hours.
+    retry_s = min(retry_s, 15 * 60)
+    _provider_cooldowns[name] = time.time() + retry_s
+    log.info(f"{name} rate-limited — cooling down for {retry_s:.0f}s")
+
+
+async def call_ai(
+    agent: str,
+    user_msg: str,
+    history: list[dict] | None = None,
+) -> tuple[str, str]:
+    """
+    Route through the v4.0 ModelRouter directly (no parallel provider chain
+    here in server.py). The router handles user-selection-first routing,
+    cloud fallback, the emergency local model, and the offline canned
+    response internally — and populates its own telemetry (get_stats() /
+    the /api/model/diagnostics endpoint) as it goes, which server.py's old
+    standalone chain bypassed entirely.
+
+    Returns (reply_text, provider_name).
+
+    `history` — optional list of prior turns in OpenAI messages format
+    ([{"role":..., "content":...}]) from MemoryRouter.recent_messages().
+    Used to seed the per-agent history buffer when this agent has no
+    in-process history yet (e.g. first message, or after a restart), giving
+    the LLM real conversational context from the persistent conversation log.
+    """
+    global _last_provider
+    from models.router.model_router import get_router
+    router = get_router()
+
+    agent = _resolve_agent(agent)
+    hist = _histories.setdefault(agent, [])
+
+    # Seed from MemoryRouter conversation buffer if we have no in-process
+    # history for this agent yet — gives the LLM real prior context on
+    # first use or after a process restart.
+    if not hist and history:
+        hist.extend(history)
+        _histories[agent] = hist
+
+    hist.append({"role": "user", "content": user_msg})
+    if len(hist) > 20:
+        _histories[agent] = hist[-20:]
+        hist = _histories[agent]
+
+    system = AGENT_PROMPTS.get(agent, AGENT_PROMPTS["oracle"])
+
+    recent = memory.recall_recent(3)
+    if recent:
+        ctx = "\n".join(f"[{r['agent'].upper()}] {r['role']}: {r['content']}" for r in recent)
+        system += f"\n\nRecent context from memory:\n{ctx}"
+
+    try:
+        response = await router.complete(user_msg, system_override=system)
+        hist.append({"role": "assistant", "content": response.content})
+        await memory.add_episode("assistant", agent, response.content)
+        _last_provider = response.provider
+        log.info(f"AI via {response.provider} ({agent}): {len(response.content)} chars")
+        return response.content, response.provider.upper()
+    except Exception as e:
+        log.warning(f"call_ai: router.complete() raised unexpectedly: {e}")
+        _last_provider = "NONE"
+        return f"[ERROR] {e}", "NONE"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  STT  ─  delegates to the canonical STTEngine (perception/speech/stt.py)
+# ═══════════════════════════════════════════════════════════════════════════════
+# This used to be a second, independent implementation (Groq Whisper call +
+# faster-whisper call, hand-rolled here). It's now a thin wrapper around the
+# single shared STT_ENGINE instance created in on_startup() — see the
+# module-level docstring near STT_ENGINE/TTS_ENGINE above for why.
+
+async def transcribe_audio(audio_bytes: bytes, mime: str = "audio/webm") -> tuple[str, str]:
+    """STT via the shared STTEngine. Returns (text, detected_language)."""
+    if STT_ENGINE is None:
+        log.error("STT_ENGINE not initialised — cannot transcribe")
+        return "", "en"
+    text, lang, _confidence = await asyncio.to_thread(
+        STT_ENGINE.transcribe_blob, audio_bytes, mime
+    )
+    return text, lang
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TTS  ─  edge-tts  →  Kokoro ONNX (local fallback)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TTS  ─  delegates to the canonical TTSEngine (perception/voice/tts.py)
+# ═══════════════════════════════════════════════════════════════════════════════
+# This used to be a second, independent implementation (separate edge-tts and
+# Kokoro calls, hand-rolled here, that never resolved a language-specific
+# voice correctly because the STT side always reported "en"). It's now a
+# thin wrapper around the single shared TTS_ENGINE instance created in
+# on_startup() — see the module-level docstring near STT_ENGINE/TTS_ENGINE.
+
+_REPLY_HEADER_RE = re.compile(
+    r"^(?:#+\s*)?"                             # optional leading ### / ## / #
+    r"(?:system\s*response|response|answer|output|result|reply|"
+    r"assistant|jarvis\s*(?:response)?|agent\s*\w*\s*(?:response)?)"
+    r"\s*[:\-–—]?\s*\n*",
+    re.IGNORECASE | re.MULTILINE,
+)
+_LEADING_DIVIDER_RE = re.compile(r"^(?:---+|\*\*\*+|===+)\s*\n", re.MULTILINE)
+
+
+def _clean_llm_reply(text: str) -> str:
+    """
+    Post-process LLM output to remove common artefacts:
+
+    1. Strip leading 'System Response', '### Response:', etc. labels that
+       some models emit despite instructions not to.
+    2. Remove leading horizontal dividers (---) when they appear at the top.
+    3. Collapse 3+ consecutive blank lines into two.
+
+    This is a lightweight, regex-only pass — no heavy NLP required.
+    """
+    if not text:
+        return text
+
+    # Strip leading label up to two passes (some models nest them)
+    for _ in range(2):
+        stripped = _REPLY_HEADER_RE.sub("", text.lstrip(), count=1).lstrip()
+        if stripped != text:
+            text = stripped
+        else:
+            break
+
+    # Remove a bare divider if it's literally the first non-blank content
+    text = _LEADING_DIVIDER_RE.sub("", text.lstrip(), count=1)
+
+    # Normalise excessive blank lines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip()
+
+
+def _truncate_for_tts(text: str, max_chars: int = 4000) -> str:
+    """
+    Sentence-boundary length cap so very long LLM replies don't produce
+    multi-minute audio downloads in the browser. Pure length policy — markdown
+    stripping etc. is handled centrally by TTSEngine.clean_text().
+    """
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars]
+    last_sentence = max(
+        truncated.rfind(". "),
+        truncated.rfind("! "),
+        truncated.rfind("? "),
+    )
+    if last_sentence > max_chars // 2:
+        truncated = truncated[: last_sentence + 1]
+    return truncated
+
+
+async def synthesize_speech(text: str, lang: str = "en") -> tuple[bytes, str]:
+    """TTS via the shared TTSEngine. Returns (audio_bytes, mime_type)."""
+    if TTS_ENGINE is None:
+        log.error("TTS_ENGINE not initialised — cannot synthesise")
+        return b"", "audio/mpeg"
+    capped = _truncate_for_tts(text)
+    voice_override = RUNTIME_SETTINGS.get("voice", {}).get("tts_voice", "")
+    audio, mime = await asyncio.to_thread(
+        TTS_ENGINE.synthesize_only, capped, lang, voice_override
+    )
+    if audio:
+        log.info(f"TTS synthesised via {TTS_ENGINE.__class__.__name__}", language=lang, mime=mime)
+    return audio, mime
+
+
+def _measure_audio_duration_s(audio: bytes, mime: str) -> float | None:
+    """
+    Compute the real playback duration of TTS audio server-side.
+
+    Why this exists: browsers (Chromium in particular) report
+    `audio.duration` as Infinity for streamed/header-less MP3 blobs — which
+    is exactly what edge-tts produces — until playback reaches the end.
+    That breaks any client-side "reveal text in sync with the audio"
+    logic, since currentTime / Infinity is always ~0 until the very last
+    frame. Computing the duration here, where the real audio length is
+    known, and sending it alongside the audio sidesteps the browser bug
+    entirely instead of trying to work around it client-side.
+    """
+    try:
+        import io
+        from mutagen import File as MutagenFile
+
+        f = MutagenFile(io.BytesIO(audio))
+        if f is not None and f.info is not None and f.info.length:
+            return float(f.info.length)
+    except Exception as exc:
+        log.debug(f"Could not measure TTS audio duration via mutagen: {exc}")
+
+    # Fallback: WAV files carry duration in a plain header we can read
+    # without any extra dependency.
+    if "wav" in (mime or ""):
+        try:
+            import io as _io
+            import wave
+
+            with wave.open(_io.BytesIO(audio), "rb") as wf:
+                frames = wf.getnframes()
+                rate = wf.getframerate()
+                if rate:
+                    return frames / float(rate)
+        except Exception as exc:
+            log.debug(f"Could not measure WAV duration via wave module: {exc}")
+
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SYSTEM METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_net_prev    = psutil.net_io_counters()
+_net_prev_ts = time.time()
+
+
+def get_metrics() -> dict:
+    global _net_prev, _net_prev_ts
+    now = time.time()
+    dt  = max(now - _net_prev_ts, 0.1)
+    net_cur = psutil.net_io_counters()
+    up_bps  = (net_cur.bytes_sent - _net_prev.bytes_sent) / dt
+    dn_bps  = (net_cur.bytes_recv - _net_prev.bytes_recv) / dt
+    _net_prev    = net_cur
+    _net_prev_ts = now
+
+    def fmt_speed(bps: float) -> str:
+        if bps < 1024:    return f"{bps:.0f} B/s"
+        if bps < 1024**2: return f"{bps/1024:.1f} KB/s"
+        return f"{bps/1024**2:.1f} MB/s"
+
+    cpu_pct = psutil.cpu_percent(interval=None)
+    cpu_per = psutil.cpu_percent(interval=None, percpu=True)
+    mem     = psutil.virtual_memory()
+    disk    = psutil.disk_usage("/")
+    temps   = {}
+    try:
+        t = psutil.sensors_temperatures()
+        for key in ("coretemp", "cpu_thermal", "k10temp", "acpitz"):
+            if key in t and t[key]:
+                temps["cpu"] = t[key][0].current
+                break
+    except Exception:
+        pass
+
+    bat = None
+    try:
+        b = psutil.sensors_battery()
+        if b:
+            bat = {"percent": b.percent, "power_plugged": b.power_plugged}
+    except Exception:
+        pass
+
+    cores = cpu_per[:4] if cpu_per else [cpu_pct] * 4
+    while len(cores) < 4:
+        cores.append(0.0)
+
+    return {
+        "cpu":       round(cpu_pct, 1),
+        "cpu_cores": [round(c, 1) for c in cores],
+        "ram_pct":   round(mem.percent, 1),
+        "ram_used":  round(mem.used / 1024**3, 2),
+        "ram_total": round(mem.total / 1024**3, 2),
+        "disk_pct":  round(disk.percent, 1),
+        "disk_used": round(disk.used / 1024**3, 1),
+        "disk_total":round(disk.total / 1024**3, 1),
+        "net_up":    fmt_speed(up_bps),
+        "net_dn":    fmt_speed(dn_bps),
+        "temp_cpu":  temps.get("cpu"),
+        "battery":   bat,
+        "ts":        now,
+    }
+
+
+def get_diagnostics() -> dict:
+    # Phase 2: include orchestrator state so `curl /diagnostics` shows live agent info.
+    _orch_info: dict = {"enabled": JARVIS_ENABLE_ORCHESTRATOR, "status": "not loaded"}
+    if ORCHESTRATOR is not None:
+        try:
+            _orch_info["status"] = "online"
+            _orch_info["agents"] = list(ORCHESTRATOR.agents.keys())
+            _orch_info["agent_count"] = len(ORCHESTRATOR.agents)
+        except Exception:
+            _orch_info["status"] = "error"
+
+    # Phase 1: action guard snapshot
+    _p1_info: dict = {"enabled": JARVIS_ENABLE_ACTION_GUARD, "status": "not loaded"}
+    if ACTION_GUARD is not None:
+        try:
+            _p1_info = ACTION_GUARD.health_snapshot()
+            _p1_info["status"] = "online"
+        except Exception:
+            _p1_info["status"] = "error"
+
+    return {
+        "os":        platform.system() + " " + platform.release(),
+        "hostname":  platform.node(),
+        "python":    platform.python_version(),
+        "cpu_name":  platform.processor() or "Unknown CPU",
+        "cpu_count": psutil.cpu_count(logical=True),
+        "uptime":    int(time.time() - psutil.boot_time()),
+        "pid":       os.getpid(),
+        "action_guard": _p1_info,
+        "orchestrator": _orch_info,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TOOLS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+SAFE_CMDS = {
+    "ls", "pwd", "echo", "date", "whoami", "hostname",
+    "df", "du", "free", "top", "ps", "uname", "cat",
+    "head", "tail", "wc", "grep", "find", "which",
+    "python", "python3", "pip", "git",
+}
+
+async def tool_run_command(cmd: str) -> str:
+    # Security: parse with shlex so quoted args are handled correctly.
+    # shell=False means the OS execs the binary directly — no shell expansion,
+    # no semicolons, no backticks, no subshells. The SAFE_CMDS allowlist is the
+    # only gate needed; the old denylist was security-theatre that shell=True made
+    # trivially bypassable (e.g. "echo x; rm -rf /").
+    import shlex
+    try:
+        parts = shlex.split(cmd)
+    except ValueError as e:
+        return f"[ERROR] Could not parse command: {e}"
+    if not parts:
+        return "Empty command."
+    base = Path(parts[0]).name
+    if base not in SAFE_CMDS:
+        return f"[BLOCKED] '{base}' not in safe list."
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            parts,          # list — shell=False, no interpolation
+            shell=False,    # critical: prevents ; && || $() injection
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return ((result.stdout or "") + (result.stderr or ""))[:2000] or "(no output)"
+    except subprocess.TimeoutExpired:
+        return "[TIMEOUT]"
+    except Exception as e:
+        return f"[ERROR] {e}"
+
+
+def tool_list_dir(path: str = ".") -> str:
+    try:
+        p = Path(path).expanduser().resolve()
+        entries = sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name))
+        lines = []
+        for e in entries[:50]:
+            kind = "DIR" if e.is_dir() else "FILE"
+            size = ""
+            if e.is_file():
+                try:
+                    sz = e.stat().st_size
+                    size = f"  {sz:,} B" if sz < 1024 else f"  {sz//1024:,} KB"
+                except Exception:
+                    pass
+            lines.append(f"[{kind}] {e.name}{size}")
+        return "\n".join(lines) or "(empty)"
+    except Exception as e:
+        return f"[ERROR] {e}"
+
+
+async def tool_read_file(path: str, max_chars: int = 3000) -> str:
+    try:
+        p = Path(path).expanduser().resolve()
+        if not p.exists():
+            return f"[ERROR] File not found: {path}"
+        if p.is_dir():
+            return tool_list_dir(path)
+        content = p.read_text(errors="replace")
+        if len(content) > max_chars:
+            content = content[:max_chars] + f"\n... (truncated, {len(content)} total chars)"
+        return content
+    except Exception as e:
+        return f"[ERROR] {e}"
+
+
+import re as _re_top
+
+# Matches: "open notepad", "launch chrome", "start spotify", "close vscode",
+# "quit firefox", "exit notepad", "kill chrome"
+_OPEN_RE  = _re_top.compile(r"^\s*(?:open|launch|start|run)\s+(.+?)\s*$", _re_top.IGNORECASE)
+_CLOSE_RE = _re_top.compile(r"^\s*(?:close|quit|exit|kill|terminate)\s+(.+?)\s*$", _re_top.IGNORECASE)
+_MINIMIZE_RE = _re_top.compile(r"^\s*minimi[sz]e\s+(?:the\s+)?(.+?)\s*(?:window)?\s*$", _re_top.IGNORECASE)
+_MAXIMIZE_RE = _re_top.compile(r"^\s*(?:maximi[sz]e|full\s*screen)\s+(?:the\s+)?(.+?)\s*(?:window)?\s*$", _re_top.IGNORECASE)
+_FOCUS_RE    = _re_top.compile(r"^\s*(?:focus(?:\s+on)?|switch\s+to|bring\s+up)\s+(?:the\s+)?(.+?)\s*(?:window)?\s*$", _re_top.IGNORECASE)
+_CLOSEWIN_RE = _re_top.compile(r"^\s*close\s+(?:the\s+)?(.+?)\s+window\s*$", _re_top.IGNORECASE)
+
+# ── Browser / media automation intents (bypass LLM, dispatch to web.* tools) ──
+# Shared "on/in/via/from youtube" or "on/in yt" suffix — YouTube mention
+# (in some form) is required to avoid false-positives on generic
+# "play ..." chat messages that say nothing about YouTube.
+_YT_SUFFIX = r"(?:on|in|via|from)\s+you\s*tube|(?:on|in)\s+yt"
+
+# "play <query> on/in/via/from youtube" / "play <query> on/in yt"
+_YT_PLAY_RE = _re_top.compile(
+    rf"^\s*play\s+(.+?)\s+(?:{_YT_SUFFIX})\s*$", _re_top.IGNORECASE
+)
+# "search <query> on/in/via/from youtube", "youtube search <query>", "search youtube for <query>"
+_YT_SEARCH_RE = _re_top.compile(
+    rf"^\s*(?:search\s+(?:for\s+)?(.+?)\s+(?:{_YT_SUFFIX})|"
+    r"you\s*tube\s+search\s+(?:for\s+)?(.+?)|"
+    r"search\s+you\s*tube\s+for\s+(.+?))\s*$",
+    _re_top.IGNORECASE,
+)
+# "play the Nth/2nd/3rd result/video for <query> on/in/via/from youtube (or on/in yt)"
+_YT_PLAY_INDEX_RE = _re_top.compile(
+    rf"^\s*play\s+(?:the\s+)?(\d+)(?:st|nd|rd|th)?\s+(?:result|video)\s+(?:for\s+)?(.+?)"
+    rf"(?:\s+(?:{_YT_SUFFIX}))?\s*$",
+    _re_top.IGNORECASE,
+)
+
+
+async def _try_app_command(text: str) -> str | None:
+    """
+    Lightweight intent detector for 'open X' / 'close X' style commands.
+    Bypasses the LLM and dispatches directly to apps.open / apps.close via
+    the ToolRegistry. Returns a reply string if handled, else None.
+    """
+    if TOOL_REGISTRY is None:
+        return None
+
+    # ── YouTube play/search intents (bypass LLM — actually drive the browser) ──
+    m = _YT_PLAY_INDEX_RE.match(text)
+    if m:
+        idx = int(m.group(1))
+        query = m.group(2).strip().rstrip(".!?")
+        result = await TOOL_REGISTRY.invoke("web.youtube_play", query=query, index=idx)
+        if result.success:
+            val = result.value or {}
+            return (f"▶️ {val.get('message')}" if val.get("success")
+                    else f"⚠️ {val.get('message', 'Could not play that result.')}")
+        return f"⚠️ {result.error}"
+
+    m = _YT_SEARCH_RE.match(text)
+    if m:
+        query = next((g for g in m.groups() if g), "").strip().rstrip(".!?")
+        result = await TOOL_REGISTRY.invoke("web.youtube_search", query=query)
+        if result.success:
+            val = result.value or {}
+            count = val.get("result_count", 0)
+            return f"🔍 Searched YouTube for \"{query}\" — found {count} result(s)."
+        return f"⚠️ {result.error}"
+
+    m = _YT_PLAY_RE.match(text)
+    if m:
+        query = m.group(1).strip().rstrip(".!?")
+        result = await TOOL_REGISTRY.invoke("web.youtube_play", query=query, index=1)
+        if result.success:
+            val = result.value or {}
+            return (f"▶️ {val.get('message')}" if val.get("success")
+                    else f"⚠️ {val.get('message', 'Could not play that.')}")
+        return f"⚠️ {result.error}"
+
+    # Window commands checked first (more specific patterns)
+    m = _CLOSEWIN_RE.match(text)
+    if m:
+        title = m.group(1).strip().rstrip(".!?")
+        result = await TOOL_REGISTRY.invoke("window.close", title=title)
+        if result.success:
+            val = result.value or {}
+            return (f"✅ {val.get('message')}" if val.get("success")
+                    else f"⚠️ {val.get('message')}")
+        return f"⚠️ {result.error}"
+
+    m = _MINIMIZE_RE.match(text)
+    if m:
+        title = m.group(1).strip().rstrip(".!?")
+        result = await TOOL_REGISTRY.invoke("window.minimize", title=title)
+        if result.success:
+            val = result.value or {}
+            return (f"✅ {val.get('message')}" if val.get("success")
+                    else f"⚠️ {val.get('message')}")
+        return f"⚠️ {result.error}"
+
+    m = _MAXIMIZE_RE.match(text)
+    if m:
+        title = m.group(1).strip().rstrip(".!?")
+        result = await TOOL_REGISTRY.invoke("window.maximize", title=title)
+        if result.success:
+            val = result.value or {}
+            return (f"✅ {val.get('message')}" if val.get("success")
+                    else f"⚠️ {val.get('message')}")
+        return f"⚠️ {result.error}"
+
+    m = _FOCUS_RE.match(text)
+    if m:
+        title = m.group(1).strip().rstrip(".!?")
+        result = await TOOL_REGISTRY.invoke("window.focus", title=title)
+        if result.success:
+            val = result.value or {}
+            return (f"✅ {val.get('message')}" if val.get("success")
+                    else f"⚠️ {val.get('message')}")
+        return f"⚠️ {result.error}"
+
+    m = _OPEN_RE.match(text)
+    if m:
+        target = m.group(1).strip().rstrip(".!?")
+        result = await TOOL_REGISTRY.invoke("apps.open", name=target)
+        if result.success:
+            val = result.value or {}
+            if val.get("success"):
+                return f"✅ {val.get('message', f'Opened {target}.')}"
+            return f"⚠️ {val.get('message', f'Could not open {target}.')}"
+        return f"⚠️ {result.error}"
+
+    m = _CLOSE_RE.match(text)
+    if m:
+        target = m.group(1).strip().rstrip(".!?")
+        result = await TOOL_REGISTRY.invoke("apps.close", name=target)
+        if result.success:
+            val = result.value or {}
+            if val.get("success"):
+                return f"✅ {val.get('message', f'Closed {target}.')}"
+            return f"⚠️ {val.get('message', f'Could not close {target}.')}"
+        return f"⚠️ {result.error}"
+
+    return None
+
+
+async def dispatch_tool(name: str, args: dict) -> str:
+    # Phase 0 metrics: count every tool invocation through this single funnel
+    # regardless of which branch below actually handles it. Non-fatal if the
+    # collector isn't loaded (METRICS_COLLECTOR is None).
+    _t0 = time.monotonic()
+    if METRICS_COLLECTOR is not None:
+        METRICS_COLLECTOR.increment("tool_invocations_total")
+        METRICS_COLLECTOR.increment(f"tool_invocations.{name}")
+    try:
+        return await _dispatch_tool_impl(name, args)
+    finally:
+        if METRICS_COLLECTOR is not None:
+            METRICS_COLLECTOR.record_latency("tool_invocation", (time.monotonic() - _t0) * 1000)
+
+
+async def _dispatch_tool_impl(name: str, args: dict) -> str:
+    if name == "run_command":  return await tool_run_command(args.get("cmd", ""))
+    if name == "list_dir":     return tool_list_dir(args.get("path", "."))
+    if name == "read_file":    return await tool_read_file(args.get("path", ""))
+    if name == "system_info":
+        return json.dumps({**get_metrics(), **get_diagnostics()}, indent=2)
+    if name == "memory_stats":
+        return json.dumps(memory.stats(), indent=2)
+
+    # P-12: Browser tools via Playwright
+    if name.startswith("browser_") or name in ("browser_navigate", "browser_extract",
+                                                 "browser_interact", "browser_screenshot"):
+        if _browser_tools is not None:
+            try:
+                return await _browser_tools.dispatch(name, args)
+            except Exception as e:
+                return f"[ERROR] Browser tool {name}: {e}"
+        return "Browser tools not available (Playwright not installed — run: playwright install chromium)"
+
+    # ── Fallback: full ToolRegistry (browser.*, web.*, fs.*, code.*, etc.) ──
+    if TOOL_REGISTRY is not None:
+        result = await TOOL_REGISTRY.invoke(name, **args)
+        if result.success:
+            try:
+                return json.dumps(result.value, indent=2, default=str)
+            except Exception:
+                return str(result.value)
+        return f"[ERROR] {result.error}"
+
+    return f"[ERROR] Unknown tool: {name}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  WEBSOCKET MANAGER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ConnectionManager:
+    # P-06: Per-connection rate-limit settings (configurable via RUNTIME_SETTINGS)
+    _RATE_LIMIT_MSGS: int = 30     # max messages
+    _RATE_LIMIT_WINDOW: float = 10.0  # seconds
+
+    def __init__(self):
+        self._clients: set[WebSocket] = set()
+        # P-06: {ws: {"msg_times": deque(maxlen=30)}}
+        self._states: dict[WebSocket, dict] = {}
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self._clients.add(ws)
+        from collections import deque
+        self._states[ws] = {"msg_times": deque(maxlen=self._RATE_LIMIT_MSGS)}
+        log.info(f"HUD connected ({len(self._clients)} clients)")
+
+    def disconnect(self, ws: WebSocket):
+        self._clients.discard(ws)
+        self._states.pop(ws, None)
+        log.info(f"HUD disconnected ({len(self._clients)} clients)")
+
+    def is_rate_limited(self, ws: WebSocket) -> bool:
+        """Return True if this connection has exceeded the rate limit."""
+        state = self._states.get(ws)
+        if state is None:
+            return False
+        now = time.time()
+        times = state["msg_times"]
+        times.append(now)
+        # Count messages within the window
+        limit = RUNTIME_SETTINGS.get("rate_limit_msgs", self._RATE_LIMIT_MSGS)
+        window = RUNTIME_SETTINGS.get("rate_limit_window", self._RATE_LIMIT_WINDOW)
+        recent = sum(1 for t in times if now - t <= window)
+        return recent > limit
+
+    async def broadcast(self, msg: dict):
+        dead = set()
+        for ws in self._clients:
+            try:
+                await ws.send_text(json.dumps(msg))
+            except Exception:
+                dead.add(ws)
+        for ws in dead:
+            self._clients.discard(ws)
+
+    async def send(self, ws: WebSocket, msg: dict):
+        await ws.send_text(json.dumps(msg))
+        # P-11: Keep a short replay buffer per connection (last 5 messages)
+        state = self._states.get(ws)
+        if state is not None:
+            buf = state.setdefault("replay_buf", [])
+            buf.append(msg)
+            if len(buf) > 5:
+                buf.pop(0)
+
+
+manager = ConnectionManager()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  WEBSOCKET ENDPOINT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    # Auth: if JARVIS_SECRET is configured, require ?token=<secret> in the URL.
+    # The HUD client must append the token when opening the WebSocket connection.
+    if SERVER_SECRET:
+        token = ws.query_params.get("token", "")
+        if token != SERVER_SECRET:
+            await ws.close(code=4401, reason="Unauthorized")
+            log.warning("WebSocket rejected — invalid or missing token")
+            return
+
+    await manager.connect(ws)
+    diag      = get_diagnostics()
+    mem_stats = memory.stats()
+    # P-28: Include recent chat history in the boot message so the UI can
+    # display previous session context without a separate round-trip.
+    recent_history = memory.recall_recent(20)
+    await manager.send(ws, {
+        "type":        "boot",
+        "tunnel_url":  _ngrok_tunnel_url,
+        "diagnostics": diag,
+        "memory_stats": mem_stats,
+        "recent_history": recent_history,   # P-28
+        "providers": {
+            "groq":   bool(GROQ_KEY),
+            "qwen_openvino": _qwen_openvino_enabled(),
+            "gemini": bool(GEMINI_KEY),
+            "ollama": True,   # always available as local fallback
+        },
+        "agents": {aid: _agent_metrics_message(aid) for aid in AGENT_REGISTRY},
+        "settings": RUNTIME_SETTINGS,
+    })
+    try:
+        while True:
+            raw = await ws.receive_text()
+            msg = json.loads(raw)
+            # P-11: Handle reconnect handshake — replay buffered messages
+            if msg.get("type") == "reconnect":
+                state = manager._states.get(ws, {})
+                replay = state.get("replay_buf", [])
+                for buffered_msg in replay:
+                    try:
+                        await ws.send_text(json.dumps(buffered_msg))
+                    except Exception:
+                        break
+                await manager.send(ws, {
+                    "type": "boot", "reconnected": True,
+                    "diagnostics": diag, "memory_stats": memory.stats(),
+                    "recent_history": memory.recall_recent(20),
+                    "agents": {aid: _agent_metrics_message(aid) for aid in AGENT_REGISTRY},
+                    "settings": RUNTIME_SETTINGS,
+                })
+                continue
+            try:
+                await _handle_message(ws, msg)
+            except WebSocketDisconnect:
+                raise
+            except Exception as exc:
+                # FIXED: previously any uncaught error from a single message
+                # (e.g. the missing-synthesize_only crash) propagated up to
+                # the outer except below and disconnected the whole session.
+                # Isolate per-message failures so the connection — and the
+                # rest of the conversation — survives one bad message.
+                log.error(
+                    f"Message handler error (type={msg.get('type')}): {exc}",
+                    exc_info=True,
+                )
+                try:
+                    await manager.send(ws, {"type": "status", "text": "▸ READY"})
+                except Exception:
+                    pass
+    except WebSocketDisconnect:
+        manager.disconnect(ws)
+    except Exception as e:
+        log.error(f"WS error: {e}")
+        manager.disconnect(ws)
+
+
+async def _handle_message(ws: WebSocket, msg: dict):
+    global model_switcher
+    mtype = msg.get("type", "")
+
+    # P-06: Per-connection rate limiting (drop if >30 msgs / 10s)
+    if manager.is_rate_limited(ws):
+        await manager.send(ws, {"type": "error", "text": "Rate limit exceeded. Slow down."})
+        return
+
+    # ── AI chat ────────────────────────────────────────────────────────────────
+    if mtype == "chat":
+        agent = _resolve_agent(msg.get("agent", "oracle"))
+        text  = msg.get("text", "").strip()
+
+        # P-06: Input sanitization
+        if len(text) > 8000:
+            await manager.send(ws, {"type": "status", "text": "▸ Message truncated to 8000 chars."})
+            text = text[:8000]
+        if text and not text.strip():
+            return  # only whitespace
+
+        files = msg.get("files") or []
+        if not text and not files:
+            return
+
+        # ── Read attached files and fold their content into the prompt ─────
+        file_context = ""
+        if files:
+            file_context = await _build_file_context(files)
+            if not text:
+                text = "Please review the attached file(s)."
+
+        await memory.add_episode("user", agent, text if not files else f"{text}  [files: {', '.join(files)}]")
+        # Push to the rolling conversation buffer (OpenAI-format) so call_ai()
+        # can include recent history in the LLM prompt.
+        if MEMORY_ROUTER is not None:
+            MEMORY_ROUTER.remember_turn("user", text)
+        await manager.send(ws, {"type": "status",   "text": f"▸ {agent.upper()} PROCESSING..."})
+        await manager.send(ws, {"type": "thinking", "agent": agent})
+
+        _mark_agent_working(agent, text)
+        await manager.broadcast(_agent_metrics_message(agent))
+
+        # ── App open/close intent shortcut (bypasses LLM) ───────────────────
+        app_reply = await _try_app_command(text) if not files else None
+        if app_reply is not None:
+            await memory.add_episode("assistant", agent, app_reply)
+            _mark_agent_done(agent, success=True)
+            await manager.broadcast(_agent_metrics_message(agent))
+            await manager.send(ws, {
+                "type": "chat_reply", "agent": agent, "text": app_reply, "provider": "TOOL",
+            })
+            await manager.send(ws, {"type": "status", "text": "▸ READY"})
+            await manager.send(ws, {"type": "memory_stats", **memory.stats()})
+            return
+
+        # Build the message actually sent to the LLM, including file content
+        llm_input = text
+        if file_context:
+            llm_input = f"{text}\n\n{file_context}"
+
+        # Pull recent conversation turns to include as history context.
+        prior_turns = (
+            MEMORY_ROUTER.recent_messages(n=10) if MEMORY_ROUTER is not None else []
+        )
+
+        # P-10: Streaming — only when client requests it AND the selected provider
+        # is Groq (streaming is only implemented for Groq in server.py).
+        # If the user switched to Gemini/Ollama, fall through to call_ai() which
+        # handles those providers correctly.
+        try:
+            from models.switcher.model_switcher import ModelSwitcher as _MS2
+            _active_prov = _MS2.get_instance().current_provider.lower()
+        except Exception:
+            _active_prov = "groq"
+        want_stream = msg.get("stream", False) and bool(GROQ_KEY) and _active_prov == "groq"
+        t_start = time.monotonic()
+
+        try:
+            if want_stream:
+                # Build system + messages the same way call_ai() does
+                _agent_id = _resolve_agent(agent)
+                _hist = _histories.setdefault(_agent_id, [])
+                if not _hist and prior_turns:
+                    _hist.extend(prior_turns)
+                _hist.append({"role": "user", "content": llm_input})
+                if len(_hist) > 20:
+                    _histories[_agent_id] = _hist[-20:]
+                    _hist = _histories[_agent_id]
+                _system = AGENT_PROMPTS.get(_agent_id, AGENT_PROMPTS["oracle"])
+                recent = memory.recall_recent(3)
+                if recent:
+                    ctx = "\n".join(f"[{r['agent'].upper()}] {r['role']}: {r['content']}" for r in recent)
+                    _system += f"\n\nRecent context from memory:\n{ctx}"
+                _groq_last_usage.clear()
+                reply = await _call_groq_streaming(_agent_id, list(_hist), _system, ws)
+                _hist.append({"role": "assistant", "content": reply})
+                await memory.add_episode("assistant", agent, reply)
+                provider = "GROQ"
+                _last_provider = provider
+                _mark_agent_done(agent, success=True)
+            else:
+                # ── Phase 2: Orchestrator path ──────────────────────────────
+                # When JARVIS_ENABLE_ORCHESTRATOR=true and the orchestrator is
+                # running, submit the intent through the Coordinator Agent so the
+                # real specialist agents execute.  The orchestrator publishes
+                # agent.workflow.step events which the existing _on_workflow_step
+                # relay already broadcasts to HUD clients.
+                #
+                # Limitation in Phase 2: the orchestrator is event-driven and
+                # does not return a reply synchronously. We wait up to 30 s for
+                # a chat_reply event on the bus; if nothing comes back in time
+                # we fall through to the regular call_ai() path so the user
+                # never sees a timeout with no answer.
+                _orch_reply: str | None = None
+                _orch_provider: str = "ORCHESTRATOR"
+                if ORCHESTRATOR is not None and not files:
+                    try:
+                        import asyncio as _aio
+                        _reply_ready: _aio.Event = _aio.Event()
+                        _orch_result: dict = {}
+
+                        async def _capture_orch_reply(event) -> None:
+                            p = event.payload if hasattr(event, "payload") else event
+                            # Only capture replies that look like a final response
+                            if p.get("session_id", "") == msg.get("session_id", "") or True:
+                                content = p.get("content", p.get("reply", p.get("result", "")))
+                                if content:
+                                    _orch_result["reply"] = str(content)
+                                    _orch_result["agent"] = p.get("agent_name", agent)
+                                    _reply_ready.set()
+
+                        _SERVER_BUS.subscribe("agent.response", _capture_orch_reply)
+                        _SERVER_BUS.subscribe("orchestrator.response", _capture_orch_reply)
+
+                        await ORCHESTRATOR.submit_intent(
+                            text=llm_input,
+                            session_id=msg.get("session_id", ""),
+                            metadata={"agent_hint": agent, "ws_client": True},
+                        )
+
+                        try:
+                            await _aio.wait_for(_reply_ready.wait(), timeout=30.0)
+                            _orch_reply = _orch_result.get("reply")
+                        except _aio.TimeoutError:
+                            log.warning("Phase 2: orchestrator did not reply within 30 s — falling back to call_ai()")
+                        finally:
+                            # Always clean up — use the public unsubscribe() API
+                            try:
+                                _SERVER_BUS.unsubscribe("agent.response", _capture_orch_reply)
+                            except Exception:
+                                pass
+                            try:
+                                _SERVER_BUS.unsubscribe("orchestrator.response", _capture_orch_reply)
+                            except Exception:
+                                pass
+                    except Exception as _oe:
+                        log.warning(f"Phase 2: orchestrator routing error ({_oe}) — falling back to call_ai()")
+                        _orch_reply = None
+
+                if _orch_reply is not None:
+                    reply = _orch_reply
+                    provider = _orch_provider
+                    _mark_agent_done(agent, success=True)
+                else:
+                    reply, provider = await call_ai(agent, llm_input, history=prior_turns)
+                    _mark_agent_done(agent, success=(provider != "NONE"))
+        except Exception as e:
+            reply, provider = f"[ERROR] {e}", "NONE"
+            _mark_agent_done(agent, success=False)
+
+        latency_s = round(time.monotonic() - t_start, 2)
+        await manager.broadcast(_agent_metrics_message(agent))
+
+        # ── Post-process: strip LLM label artefacts ("System Response" etc.) ──
+        reply = _clean_llm_reply(reply)
+
+        # Push assistant reply into conversation buffer for next turn's history.
+        if MEMORY_ROUTER is not None and not reply.startswith("[ERROR]"):
+            MEMORY_ROUTER.remember_turn("assistant", reply)
+
+        # ── DailySummary: ingest this interaction as a decision event ─────────
+        if DAILY_SUMMARY is not None:
+            import time as _time
+            try:
+                DAILY_SUMMARY.aggregate_events([{
+                    "category": "decision",
+                    "timestamp": _time.time(),
+                    "source": f"agent.{agent}",
+                    "action": text[:80],
+                    "score": 0.8 if not reply.startswith("[ERROR]") else 0.2,
+                    "confidence": "high" if provider not in ("NONE",) else "low",
+                }])
+            except Exception as _ds_exc:
+                log.debug(f"DailySummary ingest failed: {_ds_exc}")
+
+        # P-19: Build usage + cost payload for the reply
+        _usage = None
+        _cost  = None
+        if provider == "GROQ" and _groq_last_usage:
+            _usage = {
+                "prompt":     _groq_last_usage.get("prompt", 0),
+                "completion": _groq_last_usage.get("completion", 0),
+                "total":      _groq_last_usage.get("total", 0),
+            }
+            # Groq pricing ~$0.59 per 1M tokens (llama-3.3-70b-versatile, 2026)
+            _cost = round(_usage["total"] * 0.00000059, 6)
+
+        reply_payload: dict = {
+            "type":     "chat_reply",
+            "agent":    agent,
+            "text":     reply,
+            "provider": provider,
+            "latency_s": latency_s,
+        }
+        if _usage:
+            reply_payload["usage"] = _usage
+        if _cost is not None:
+            reply_payload["cost_usd"] = _cost
+
+        # ── TTS SYNC FIX ─────────────────────────────────────────────────────
+        # Synthesise TTS BEFORE sending chat_reply so both messages go out in
+        # the same network burst.  The client (jarvisV3.html _holdReplyForVoiceSync)
+        # holds the text bubble until tts_audio arrives; if we sent chat_reply
+        # first the user saw text appear 1-3 s before audio started — visible
+        # de-sync.  By synthesising first we pay the latency server-side (the
+        # user sees the "PROCESSING..." spinner a little longer) but the moment
+        # the bubble appears it is already accompanied by audio.
+        tts_enabled = RUNTIME_SETTINGS.get("voice", {}).get("tts_enabled", True)
+        tts_payload: dict | None = None
+        if msg.get("tts", False) and tts_enabled:
+            lang = RUNTIME_SETTINGS.get("voice", {}).get("language", "en")
+            try:
+                audio, mime = await synthesize_speech(reply, lang)
+                if audio:
+                    b64 = base64.b64encode(audio).decode()
+                    duration_s = _measure_audio_duration_s(audio, mime)
+                    tts_payload = {
+                        "type": "tts_audio", "b64": b64, "mime": mime,
+                        "duration_s": duration_s,
+                    }
+                    log.info("TTS pre-synthesised (%d bytes, %.1fs) — sending with reply",
+                             len(audio), duration_s or 0)
+            except Exception as exc:
+                # Keep the WS session alive — TTS failure must not kill the
+                # chat connection (see earlier bug where this crashed the WS).
+                log.error(f"TTS synthesis failed: {exc}", exc_info=True)
+
+        # Send reply first, then TTS immediately after — both hit the client in
+        # the same TCP window so the gap is sub-millisecond on localhost.
+        await manager.send(ws, reply_payload)
+        if tts_payload is not None:
+            await manager.send(ws, tts_payload)
+        await manager.send(ws, {"type": "status", "text": "▸ READY"})
+        await manager.send(ws, {"type": "memory_stats", **memory.stats()})
+
+    # ── STT audio (batch: record → send full blob) ─────────────────────────
+    elif mtype == "stt_audio":
+        b64  = msg.get("data", "")
+        mime = msg.get("mime", "audio/webm")
+        if not b64:
+            return
+        audio_bytes = base64.b64decode(b64)
+        await manager.send(ws, {"type": "status", "text": "▸ TRANSCRIBING..."})
+        try:
+            transcript, lang = await transcribe_audio(audio_bytes, mime)
+        except Exception as exc:
+            log.error(f"STT transcription failed: {exc}", exc_info=True)
+            transcript = ""
+            lang = RUNTIME_SETTINGS.get("voice", {}).get("language", "en")
+            await manager.send(ws, {"type": "status", "text": "▸ TRANSCRIPTION FAILED"})
+        await manager.send(ws, {"type": "stt_result", "transcript": transcript, "language": lang})
+        RUNTIME_SETTINGS.setdefault("voice", {})["language"] = lang
+        await manager.send(ws, {"type": "status",     "text": "▸ READY"})
+
+    # ── Live STT toggle ────────────────────────────────────────────────────
+    # Sent by the mic-toggle button in the HUD.
+    # {"type": "live_stt_start"}  → server signals back "listening" status
+    # {"type": "live_stt_stop"}   → server signals back "ready" status
+    # The actual audio arrives as stt_audio chunks (existing path) or via
+    # streaming mic_chunk messages below.
+    elif mtype == "live_stt_start":
+        log.info("Live STT started (client mic toggle ON)")
+        await manager.send(ws, {"type": "status", "text": "▸ LISTENING..."})
+        await manager.send(ws, {"type": "live_stt_ack", "active": True})
+
+    elif mtype == "live_stt_stop":
+        log.info("Live STT stopped (client mic toggle OFF)")
+        await manager.send(ws, {"type": "status", "text": "▸ READY"})
+        await manager.send(ws, {"type": "live_stt_ack", "active": False})
+
+    # ── Streaming mic chunk (partial Live-STT path) ────────────────────────
+    # The frontend can stream 1-2s audio blobs as {"type": "mic_chunk",
+    # "data": "<b64>", "mime": "audio/webm"} while recording for real-time
+    # partial transcription feedback. Each chunk is transcribed independently
+    # and the result pushed back as {"type": "stt_partial", "text": "..."}.
+    # The UI shows this as placeholder text in the input box while the user
+    # is still speaking.
+    elif mtype == "mic_chunk":
+        b64  = msg.get("data", "")
+        mime = msg.get("mime", "audio/webm")
+        if not b64:
+            return
+        audio_bytes = base64.b64decode(b64)
+        try:
+            partial, lang = await transcribe_audio(audio_bytes, mime)
+            if partial:
+                await manager.send(ws, {"type": "stt_partial", "text": partial, "language": lang})
+        except Exception as exc:
+            log.debug(f"mic_chunk transcription failed: {exc}")
+
+    # ── Tool ─────────────────────────────────────────────────────────────────
+    elif mtype == "tool":
+        tool_name = msg.get("tool", "")
+        args      = msg.get("args", {})
+        await manager.send(ws, {"type": "status", "text": f"▸ TOOL: {tool_name.upper()}"})
+        result = await dispatch_tool(tool_name, args)
+        # P-12: browser_screenshot may return raw bytes — base64-encode them for the UI
+        if tool_name == "browser_screenshot" and isinstance(result, bytes):
+            b64_img = base64.b64encode(result).decode()
+            await manager.send(ws, {
+                "type": "tool_result", "tool": tool_name,
+                "image_b64": b64_img, "mime": "image/png",
+            })
+        else:
+            await manager.send(ws, {"type": "tool_result", "tool": tool_name, "result": result})
+        await manager.send(ws, {"type": "status", "text": "▸ READY"})
+
+    # ── Memory store ──────────────────────────────────────────────────────────
+    elif mtype == "memory_store":
+        key = msg.get("key", "")
+        val = msg.get("value", "")
+        if key and val:
+            await memory.store_semantic(key, val)
+            if MEMORY_ROUTER is not None:
+                try:
+                    from memory.working.context import WorkingMemoryTag
+                    await MEMORY_ROUTER.remember(content=f"{key}: {val}", tag=WorkingMemoryTag.FACT)
+                except Exception as e:
+                    log.debug(f"MemoryRouter.remember failed: {e}")
+            await manager.send(ws, {
+                "type": "memory_ack", "action": "stored", "key": key,
+                **memory.stats(),
+            })
+
+    # ── Memory recall ─────────────────────────────────────────────────────────
+    elif mtype == "memory_recall":
+        query   = msg.get("query", "")
+        results = memory.recall_semantic(query)
+        recent  = memory.recall_recent(5)
+        router_results = []
+        if MEMORY_ROUTER is not None:
+            try:
+                from memory.router.memory_router import MemoryQuery
+                hits = await MEMORY_ROUTER.search(MemoryQuery(text=query))
+                router_results = [
+                    {"text": getattr(h, "content", str(h)), "score": getattr(h, "score", None)}
+                    for h in hits
+                ]
+            except Exception as e:
+                log.debug(f"MemoryRouter.search failed: {e}")
+        await manager.send(ws, {
+            "type":     "memory_results",
+            "semantic": results,
+            "recent":   recent,
+            "router":   router_results,
+        })
+
+    # ── Task planner ─────────────────────────────────────────────────────────
+    elif mtype == "task_create":
+        intent = msg.get("text", "").strip()
+        if not intent:
+            return
+        if TASK_PLANNER is None:
+            await manager.send(ws, {"type": "task_error", "error": "Task planner not available"})
+            return
+        try:
+            plan = await TASK_PLANNER.plan(intent, session_id=msg.get("session_id", ""))
+            await manager.send(ws, {
+                "type": "task_created",
+                "plan_id": plan.plan_id,
+                "intent": plan.intent,
+                "root_goal": {
+                    "goal_id": plan.root_goal.goal_id,
+                    "title": plan.root_goal.title,
+                    "status": str(plan.root_goal.status),
+                },
+                "sub_goals": [
+                    {
+                        "goal_id": g.goal_id,
+                        "title": g.title,
+                        "description": g.description,
+                        "assigned_to": g.assigned_to,
+                        "status": str(g.status),
+                    }
+                    for g in plan.sub_goals
+                ],
+            })
+        except Exception as e:
+            log.error(f"task_create failed: {e}")
+            await manager.send(ws, {"type": "task_error", "error": str(e)})
+
+    elif mtype == "task_list":
+        if TASK_PLANNER is None:
+            await manager.send(ws, {"type": "task_list_result", "plans": []})
+            return
+        plans = []
+        for plan in TASK_PLANNER._plans.values():
+            plans.append({
+                "plan_id": plan.plan_id,
+                "intent": plan.intent,
+                "root_goal": {
+                    "goal_id": plan.root_goal.goal_id,
+                    "title": plan.root_goal.title,
+                    "status": str(plan.root_goal.status),
+                },
+                "sub_goals": [
+                    {"goal_id": g.goal_id, "title": g.title,
+                     "assigned_to": g.assigned_to, "status": str(g.status)}
+                    for g in plan.sub_goals
+                ],
+            })
+        await manager.send(ws, {"type": "task_list_result", "plans": plans})
+
+    # ── Settings update ─────────────────────────────────────────────────────────
+    elif mtype == "settings_update":
+        settings = msg.get("settings", {})
+        apply_settings(settings)
+        await manager.send(ws, {"type": "settings_ack", "settings": settings})
+
+    # ── Settings get ─────────────────────────────────────────────────────────
+    elif mtype == "settings_get":
+        await manager.send(ws, {"type": "settings_data", "settings": RUNTIME_SETTINGS})
+
+    # ── Ping ─────────────────────────────────────────────────────────────────
+    elif mtype == "ping":
+        await manager.send(ws, {"type": "pong", "ts": time.time()})
+
+    # ── Model Switcher ────────────────────────────────────────────────────────
+    # Mobile HUD sends {"type": "model_switch", "model": <name>, "kind": "cloud"|"ollama"}.
+    # "kind" maps to the switcher's provider argument: "cloud" means `model`
+    # IS the provider name (groq/gemini/openvino), "ollama" means `model` is
+    # an Ollama tag and provider is always "ollama".
+    elif mtype == "model_switch":
+        kind = msg.get("kind", "").lower().strip()
+        raw_model = msg.get("model", "")
+        if kind == "ollama":
+            provider = "ollama"
+            model = raw_model
+        elif kind == "local":
+            # Local non-Ollama provider (e.g. OpenVINO).
+            # The provider key comes from msg["provider"], not msg["model"].
+            provider = msg.get("provider", raw_model).lower().strip()
+            model = None
+        elif kind == "cloud":
+            provider = raw_model.lower().strip()
+            model = None
+        else:
+            # Back-compat: older callers send {"provider": ..., "model": ...} directly
+            provider = msg.get("provider", "groq").lower().strip()
+            model = msg.get("model")
+
+        if model_switcher is None:
+            model_switcher = ModelSwitcher.get_instance()
+        success = await model_switcher.switch(provider, model)
+        state = model_switcher.get_state()
+        if success:
+            await manager.send(ws, {
+                "type": "model_switched", "success": True,
+                "model": state["model"], "kind": kind or ("ollama" if provider == "ollama" else "cloud"),
+                "state": state,
+            })
+        else:
+            await manager.send(ws, {
+                "type": "model_switch_error",
+                "error": f"Could not switch to {provider}" + (f"/{model}" if model else ""),
+                "state": state,
+            })
+
+    # ── Ollama model discovery (for HUD model-sheet + Settings fallback picker) ──
+    elif mtype == "list_ollama_models":
+        if model_switcher is None:
+            model_switcher = ModelSwitcher.get_instance()
+        try:
+            models = await model_switcher.list_ollama_models()
+        except Exception as exc:
+            models = []
+            log.warning("list_ollama_models failed: %s", exc)
+        await manager.send(ws, {"type": "ollama_models", "models": models})
+
+    elif mtype == "model_state":
+        if model_switcher is None:
+            model_switcher = ModelSwitcher.get_instance()
+        state = model_switcher.get_state()
+        await manager.send(ws, {"type": "model_state", "state": state})
+
+    elif mtype == "model_cycle":
+        if model_switcher is None:
+            model_switcher = ModelSwitcher.get_instance()
+        success = await model_switcher.cycle_to_next()
+        state = model_switcher.get_state()
+        await manager.send(ws, {"type": "model_cycled", "success": success, "state": state})
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  NGROK TUNNEL HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def _start_ngrok() -> None:
+    """
+    Fire-and-forget: open an ngrok tunnel so the HTML HUD can be accessed
+    remotely (phone, tablet, remote PC) without port-forwarding.
+
+    Priority order:
+      1. NGROK_STATIC_URL in .env  — use as-is (your custom/paid static domain)
+      2. NGROK_AUTHTOKEN in .env   — start a dynamic tunnel via pyngrok
+      3. Neither                   — skip, local-only mode
+
+    The public URL is stored in _ngrok_tunnel_url and served via
+    GET /config/ws_url so the web HUD can auto-discover it.
+    """
+    global _ngrok_tunnel_url
+
+    if NGROK_STATIC_URL:
+        _ngrok_tunnel_url = NGROK_STATIC_URL
+        log.info(f"Ngrok static URL configured: {_ngrok_tunnel_url}")
+        return
+
+    if not NGROK_AUTHTOKEN:
+        log.info("Ngrok disabled (no NGROK_AUTHTOKEN or NGROK_STATIC_URL in .env)")
+        return
+
+    try:
+        from pyngrok import ngrok as _ngrok, conf as _ngrok_conf
+        _ngrok_conf.get_default().auth_token = NGROK_AUTHTOKEN
+        tunnel = await asyncio.to_thread(
+            _ngrok.connect, PORT, "http", bind_tls=True
+        )
+        # Convert http URL → ws URL for the HUD
+        public_url = tunnel.public_url.replace("https://", "wss://").replace("http://", "ws://")
+        _ngrok_tunnel_url = public_url.rstrip("/") + "/ws"
+        log.info(f"Ngrok tunnel active: {_ngrok_tunnel_url}")
+        # Broadcast tunnel URL to any already-connected clients
+        await manager.broadcast({"type": "tunnel_url", "url": _ngrok_tunnel_url})
+    except ImportError:
+        log.warning("pyngrok not installed — remote tunnel unavailable. Run: pip install pyngrok")
+    except Exception as e:
+        log.warning(f"Ngrok tunnel failed to start: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  REST ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/health")
+def health():
+    """
+    Phase 0: backed by observability/health/health_monitor.py when it loaded
+    successfully at startup. Falls back to the original static "ok" response
+    if HealthMonitor is disabled or failed to initialize — same shape callers
+    have always gotten, just with a "degraded"/"starting" possibility added
+    (existing tests already accept those values).
+    """
+    base = {"status": "ok", "uptime": int(time.time() - _start_time)}
+    if HEALTH_MONITOR is None:
+        base["health_monitor"] = "not loaded"
+        return base
+    snapshot = HEALTH_MONITOR.status_snapshot()
+    # "healthy" -> "ok" keeps this endpoint backward compatible with anything
+    # already polling /health and checking status == "ok"; degraded/unhealthy
+    # are new information this endpoint never reported before Phase 0.
+    base["status"] = "ok" if snapshot["system"] == "healthy" else snapshot["system"]
+    base["components"] = {
+        name: {"status": c["status"], "pass_rate": c["pass_rate"]}
+        for name, c in snapshot["components"].items()
+    }
+    return base
+
+
+@app.get("/config/ws_url")
+def ws_url_config():
+    """
+    Returns the best WebSocket URL(s) for this server.
+    The HTML HUD fetches this on load to auto-discover local + ngrok URLs
+    without any hardcoding.  Response shape:
+      {
+        "local":  "ws://localhost:7788/ws",
+        "remote": "wss://xxxx.ngrok-free.app/ws"  // or "" if no tunnel
+      }
+    The HUD tries local first; falls back to remote; falls back to offline.
+    """
+    local_url = f"ws://localhost:{PORT}/ws"
+    return JSONResponse({
+        "local":  local_url,
+        "remote": _ngrok_tunnel_url,
+    })
+
+
+@app.get("/status", response_class=HTMLResponse)
+async def status_dashboard():
+    """P-31: Human-readable health dashboard at /status — auto-refreshes every 10s."""
+    m  = get_metrics()
+    d  = get_diagnostics()
+    ms = memory.stats()
+    uptime_s = time.time() - _start_time
+    uptime_h = int(uptime_s // 3600)
+    uptime_m = int((uptime_s % 3600) // 60)
+    groq_ok   = bool(GROQ_KEY)
+    gemini_ok = bool(GEMINI_KEY)
+    browser_ok = _browser_tools is not None
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="10">
+<title>JARVIS Status</title>
+<style>
+  body{{background:#050d1a;color:#d8eeff;font-family:monospace;padding:24px;margin:0}}
+  h1{{color:#00c8ff;margin-bottom:4px}}h2{{color:#00c8ff;font-size:1em;margin:18px 0 6px}}
+  .ok{{color:#00ff88}}.warn{{color:#ff8c00}}.bad{{color:#ff4040}}
+  .card{{background:#0a1628;border:1px solid #1a3a5c;border-radius:6px;
+         padding:12px 18px;margin-bottom:10px;display:inline-block;min-width:160px;vertical-align:top}}
+  .row{{display:flex;flex-wrap:wrap;gap:10px}}
+  a{{color:#00c8ff}}p{{margin:3px 0}}
+</style></head>
+<body>
+<h1>🤖 J.A.R.V.I.S&nbsp;&nbsp;Status</h1>
+<p style="color:#5a7a9a">Auto-refreshes every 10s &nbsp;·&nbsp; <a href="/docs">API Docs</a> &nbsp;·&nbsp;
+  <a href="/metrics">Raw Metrics</a></p>
+<p>Uptime: {uptime_h}h {uptime_m}m &nbsp;|&nbsp;
+   WS connections: {len(manager._clients)} &nbsp;|&nbsp; PID: {d['pid']}</p>
+<h2>AI Providers</h2>
+<div class="row">
+  <div class="card"><b>Groq</b><br>
+    <span class="{'ok' if groq_ok else 'bad'}">{'✓ ONLINE' if groq_ok else '✗ NO KEY'}</span></div>
+  <div class="card"><b>Gemini</b><br>
+    <span class="{'ok' if gemini_ok else 'bad'}">{'✓ ONLINE' if gemini_ok else '✗ NO KEY'}</span></div>
+  <div class="card"><b>Qwen-OpenVINO</b><br>
+    <span class="{'ok' if _qwen_openvino_enabled() else 'warn'}">
+      {'✓ ENABLED' if _qwen_openvino_enabled() else '○ DISABLED'}</span></div>
+  <div class="card"><b>Ollama</b><br><span class="ok">✓ LOCAL FALLBACK</span></div>
+</div>
+<h2>System</h2>
+<div class="row">
+  <div class="card"><b>CPU</b><br>{m['cpu']}%</div>
+  <div class="card"><b>RAM</b><br>{m['ram_used']} / {m['ram_total']} GB ({m['ram_pct']}%)</div>
+  <div class="card"><b>Disk</b><br>{m['disk_used']} / {m['disk_total']} GB ({m['disk_pct']}%)</div>
+  <div class="card"><b>Network</b><br>↑ {m['net_up']} &nbsp;↓ {m['net_dn']}</div>
+</div>
+<h2>Memory Store</h2>
+<div class="row">
+  <div class="card"><b>Episodes</b><br>{ms['episodes']}</div>
+  <div class="card"><b>Semantic Facts</b><br>{ms['semantic']}</div>
+</div>
+<h2>Services</h2>
+<div class="row">
+  <div class="card"><b>Browser Tools</b><br>
+    <span class="{'ok' if browser_ok else 'warn'}">
+      {'✓ Playwright ready' if browser_ok else '○ Not initialized'}</span></div>
+  <div class="card"><b>Task Planner</b><br>
+    <span class="{'ok' if TASK_PLANNER else 'warn'}">
+      {'✓ Ready' if TASK_PLANNER else '○ Not initialized'}</span></div>
+  <div class="card"><b>Action Guard (Phase 1)</b><br>
+    <span class="{'ok' if ACTION_GUARD and ACTION_GUARD.action_guard else ('warn' if JARVIS_ENABLE_ACTION_GUARD else '')}">
+      {'✓ Online — PolicyEngine + PermissionManager + ActionGuard + TerminalManager + FileManager' if ACTION_GUARD and ACTION_GUARD.action_guard else ('⚠ Enabled but partially loaded' if JARVIS_ENABLE_ACTION_GUARD and ACTION_GUARD else ('⚠ Enabled but failed to start' if JARVIS_ENABLE_ACTION_GUARD else '○ Disabled (JARVIS_ENABLE_ACTION_GUARD=false)'))}</span></div>
+  <div class="card"><b>Orchestrator (Phase 2)</b><br>
+    <span class="{'ok' if ORCHESTRATOR else ('warn' if JARVIS_ENABLE_ORCHESTRATOR else '')}">
+      {'✓ Online — ' + str(len(ORCHESTRATOR.agents)) + ' agents' if ORCHESTRATOR else ('⚠ Enabled but failed to start' if JARVIS_ENABLE_ORCHESTRATOR else '○ Disabled (JARVIS_ENABLE_ORCHESTRATOR=false)')}</span></div>
+  <div class="card"><b>Memory Router</b><br>
+    <span class="{'ok' if MEMORY_ROUTER else 'warn'}">
+      {'✓ Ready' if MEMORY_ROUTER else '○ Not initialized'}</span></div>
+  <div class="card"><b>Embedding Service</b><br>
+    <span class="{'ok' if EMBEDDING_SERVICE else 'warn'}">
+      {'✓ ' + EMBEDDING_SERVICE.stats()['backend'] if EMBEDDING_SERVICE else '○ Not initialized'}</span></div>
+  <div class="card"><b>Daily Summary</b><br>
+    <span class="{'ok' if DAILY_SUMMARY else 'warn'}">
+      {'✓ Active' if DAILY_SUMMARY else '○ Not initialized'}</span></div>
+  <div class="card"><b>Acknowledgement</b><br>
+    <span class="{'ok' if ACKNOWLEDGEMENT_ENGINE else 'warn'}">
+      {'✓ Running' if ACKNOWLEDGEMENT_ENGINE else '○ Not initialized'}</span></div>
+  <div class="card"><b>Voice Pipeline (Phase 3)</b><br>
+    <span class="{'ok' if VOICE_COORDINATOR and getattr(VOICE_COORDINATOR, '_running', False) else ('warn' if JARVIS_ENABLE_ALWAYS_LISTENING else '')}">
+      {'✓ Online — wake-word active' if WAKE_WORD_MANAGER and WAKE_WORD_MANAGER.is_running() else ('⚠ Enabled but not started' if JARVIS_ENABLE_ALWAYS_LISTENING else '○ Disabled (JARVIS_ENABLE_ALWAYS_LISTENING=false)')}</span></div>
+  <div class="card"><b>Vision Pipeline (Phase 3)</b><br>
+    <span class="{'ok' if VISION_PIPELINE and getattr(VISION_PIPELINE, '_running', False) else ('warn' if JARVIS_ENABLE_VISION_PIPELINE else '')}">
+      {'✓ Online' if VISION_PIPELINE and getattr(VISION_PIPELINE, '_running', False) else ('⚠ Enabled but not started' if JARVIS_ENABLE_VISION_PIPELINE else '○ Disabled (JARVIS_ENABLE_VISION_PIPELINE=false)')}</span></div>
+  <div class="card"><b>Activity Observer (Phase 3)</b><br>
+    <span class="{'ok' if ACTIVITY_OBSERVER else ('warn' if JARVIS_ENABLE_VISION_PIPELINE else '')}">
+      {'✓ Polling (10s)' if ACTIVITY_OBSERVER else ('⚠ Enabled but not started' if JARVIS_ENABLE_VISION_PIPELINE else '○ Disabled')}</span></div>
+</div>
+<h2>Host</h2>
+<p>OS: {d['os']} &nbsp;|&nbsp; Python {d['python']} &nbsp;|&nbsp; {d['cpu_count']} logical CPUs</p>
+<p style="color:#2a4a6a;margin-top:24px">J.A.R.V.I.S AI OS — server.py</p>
+</body></html>"""
+
+@app.get("/metrics")
+def metrics_endpoint():
+    """
+    Returns the original CPU/RAM/disk/network snapshot (get_metrics(), used
+    by the HUD dashboard) plus, when available:
+      - "counters": Phase 0 observability/metrics/metrics_collector.py —
+        tool invocation counts/latency, recorded directly in dispatch_tool().
+      - "model_fallback_events"/"model_emergency_uses": pulled from
+        ModelRouter's own existing telemetry (models/hud_diagnostics.py) —
+        NOT re-counted here, since the router already tracks this and a
+        second counter would drift from the source of truth.
+    Shape is additive: anything already parsing this response for
+    cpu/ram/disk/net_* fields is unaffected.
+    """
+    payload = get_metrics()
+    if METRICS_COLLECTOR is not None:
+        payload["counters"] = METRICS_COLLECTOR.snapshot()
+    try:
+        from models.hud_diagnostics import get_routing_diagnostics
+        _routing = get_routing_diagnostics()
+        payload["model_fallback_events"] = _routing.get("telemetry", {}).get("fallback_events")
+        payload["model_emergency_uses"] = _routing.get("telemetry", {}).get("emergency_model_uses")
+    except Exception:
+        pass  # ModelRouter not initialized yet — omit rather than fail the whole endpoint
+    return JSONResponse(payload)
+
+@app.get("/security/status")
+def security_status_endpoint():
+    """
+    Phase 1: Returns the current state of the Safety & Action Layer.
+    Components: PolicyEngine, PermissionManager, ActionGuard, TerminalManager,
+    FileManager. Stats: evaluated/approved/blocked/passthrough counts.
+    """
+    if ACTION_GUARD is None:
+        return JSONResponse({
+            "enabled": JARVIS_ENABLE_ACTION_GUARD,
+            "status": "not loaded",
+            "reason": "ActionGuard disabled or failed to initialize — see startup logs",
+        })
+    return JSONResponse(ACTION_GUARD.health_snapshot())
+
+
+@app.get("/security/audit")
+async def security_audit_endpoint(
+    requester: str = "",
+    action_type: str = "",
+    allowed: str = "",
+    limit: int = 100,
+):
+    """
+    Phase 1: Query the in-memory permission audit log.
+    Optional filters: requester, action_type, allowed (true/false).
+    """
+    if ACTION_GUARD is None or ACTION_GUARD.permission_manager is None:
+        return JSONResponse({"error": "PermissionManager not initialized"}, status_code=503)
+    pm = ACTION_GUARD.permission_manager
+    _allowed: bool | None = None
+    if allowed.lower() == "true":
+        _allowed = True
+    elif allowed.lower() == "false":
+        _allowed = False
+    records = pm.get_audit_log(requester=requester or None, limit=limit)
+    if _allowed is not None:
+        records = [r for r in records if r.get("allowed") == _allowed]
+    if action_type:
+        records = [r for r in records if r.get("action_type") == action_type]
+    return JSONResponse({"count": len(records), "records": records})
+
+
+@app.get("/security/policy")
+def security_policy_endpoint():
+    """
+    Phase 1: List active PolicyEngine rules (name, effect, priority, requesters).
+    """
+    if ACTION_GUARD is None or ACTION_GUARD.policy_engine is None:
+        return JSONResponse({"error": "PolicyEngine not initialized"}, status_code=503)
+    return JSONResponse({
+        "rule_count": len(ACTION_GUARD.policy_engine._rules),
+        "default_allow": ACTION_GUARD.policy_engine._default_allow,
+        "rules": ACTION_GUARD.policy_engine.list_rules(),
+    })
+
+
+@app.get("/voice/status")
+def voice_status_endpoint():
+    """
+    Phase 3: Returns current state of the always-listening voice pipeline.
+    Components: WakeWordManager, VoiceCoordinator, VisionPipeline, ActivityObserver.
+    """
+    if WAKE_WORD_MANAGER is None and VOICE_COORDINATOR is None:
+        return JSONResponse({
+            "enabled": JARVIS_ENABLE_ALWAYS_LISTENING,
+            "status": "not loaded",
+            "reason": "Always-listening disabled or failed to initialize — see startup logs",
+        })
+    ww_status = WAKE_WORD_MANAGER.status() if WAKE_WORD_MANAGER is not None else {}
+    vc_stats = VOICE_COORDINATOR.stats() if VOICE_COORDINATOR is not None else {}
+    return JSONResponse({
+        "enabled": JARVIS_ENABLE_ALWAYS_LISTENING,
+        "status": "online",
+        "wake_word_manager": ww_status,
+        "voice_coordinator": {
+            "running": getattr(VOICE_COORDINATOR, "_running", False),
+            "active_run": bool(getattr(VOICE_COORDINATOR, "_current_run", None)),
+            **vc_stats,
+        },
+        "activity_observer": {"running": ACTIVITY_OBSERVER is not None},
+        "vision_pipeline": {"running": VISION_PIPELINE is not None and getattr(VISION_PIPELINE, "_running", False)},
+    })
+
+
+@app.post("/voice/wake-word/enable")
+async def voice_wakeword_enable():
+    """Phase 3: Enable always-listening wake-word detection at runtime."""
+    if WAKE_WORD_MANAGER is None:
+        return JSONResponse({"error": "WakeWordManager not initialized"}, status_code=503)
+    WAKE_WORD_MANAGER.enable()
+    return JSONResponse({"status": "ok", **WAKE_WORD_MANAGER.status()})
+
+
+@app.post("/voice/wake-word/disable")
+async def voice_wakeword_disable():
+    """Phase 3: Disable wake-word detection without stopping the server."""
+    if WAKE_WORD_MANAGER is None:
+        return JSONResponse({"error": "WakeWordManager not initialized"}, status_code=503)
+    WAKE_WORD_MANAGER.disable()
+    return JSONResponse({"status": "ok", **WAKE_WORD_MANAGER.status()})
+
+
+@app.post("/voice/activate")
+async def voice_activate_endpoint():
+    """
+    Phase 3: Programmatically trigger a voice pipeline run (same as mic button).
+    Useful for testing the full pipeline without speaking a wake word.
+    """
+    if VOICE_COORDINATOR is None:
+        return JSONResponse({"error": "VoiceCoordinator not initialized"}, status_code=503)
+    try:
+        run_id = await VOICE_COORDINATOR.activate()
+        return JSONResponse({"status": "ok", "run_id": run_id})
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/diagnostics")
+def diagnostics_endpoint():
+    return JSONResponse(get_diagnostics())
+
+@app.get("/api/model/diagnostics")
+async def routing_diagnostics():
+    """
+    Returns:
+      active.selected_provider  — what the user chose
+      active.selected_model     — exact model tag
+      telemetry.providers       — what actually answered, with latency + failure reasons
+      telemetry.fallback_events — total fallback count
+      telemetry.emergency_model_uses — times emergency model was invoked
+    """
+    from models.hud_diagnostics import get_routing_diagnostics
+    return JSONResponse(get_routing_diagnostics())
+
+@app.get("/api/model/presets")
+async def model_presets_endpoint():
+    """
+    Phase 4: Local model presets for the HUD model picker.
+
+    These are NOT separate router providers — the router owns exactly one
+    OllamaProvider (see model_router.py design rule 3). Each preset is a
+    tuned-defaults config (tag/temperature/timeout/description) for an
+    Ollama tag the HUD can quick-select. Activating one is just:
+
+        ModelSwitcher.switch("ollama", presets[name]["tag"])
+
+    Returns the `local_model_presets` dict from config/models.yaml so the
+    picker can render buttons without Ollama needing to be running yet.
+    Falls back to reading the YAML directly if ConfigManager (Phase 0) is
+    disabled or failed to load.
+    """
+    presets: dict = {}
+    if CONFIG is not None:
+        try:
+            presets = CONFIG.get("local_model_presets", {}) or {}
+        except Exception as exc:
+            log.warning("model_presets: ConfigManager.get failed, falling back to YAML", error=str(exc))
+
+    if not presets:
+        try:
+            import yaml
+            with open("config/models.yaml") as fh:
+                presets = (yaml.safe_load(fh) or {}).get("local_model_presets", {}) or {}
+        except Exception as exc:
+            return JSONResponse({"error": f"Could not load presets: {exc}"}, status_code=500)
+
+    return JSONResponse({"presets": presets})
+
+@app.get("/memory/stats")
+def memory_stats_endpoint():
+    return JSONResponse(memory.stats())
+
+@app.get("/memory/recent")
+def memory_recent_endpoint():
+    return JSONResponse(memory.recall_recent(20))
+
+@app.get("/daily-summary")
+async def daily_summary_endpoint():
+    """Generate and return today's intelligence summary (JSON format)."""
+    if DAILY_SUMMARY is None:
+        return JSONResponse({"error": "DailySummary not initialized"}, status_code=503)
+    try:
+        report = DAILY_SUMMARY.generate_summary()
+        return JSONResponse(report.to_dict())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/daily-summary/export")
+async def daily_summary_export_endpoint():
+    """Export today's summary to disk (JSON + Markdown) and return paths."""
+    if DAILY_SUMMARY is None:
+        return JSONResponse({"error": "DailySummary not initialized"}, status_code=503)
+    try:
+        report = DAILY_SUMMARY.generate_summary()
+        paths = DAILY_SUMMARY.export_summary(report, output_dir="datastore/summaries")
+        return JSONResponse({"status": "ok", "paths": paths, "date": report.date_label})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/embed")
+async def embed_endpoint(body: dict = {}):
+    """Embed a text string and return its vector + metadata."""
+    if EMBEDDING_SERVICE is None:
+        return JSONResponse({"error": "EmbeddingService not initialized"}, status_code=503)
+    text = body.get("text", "").strip()
+    if not text:
+        return JSONResponse({"error": "text field required"}, status_code=400)
+    try:
+        result = await EMBEDDING_SERVICE.embed(text)
+        return JSONResponse(result.to_dict())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/embedding/stats")
+def embedding_stats_endpoint():
+    """Return EmbeddingService diagnostics (backend, cache hit rate, etc.)."""
+    if EMBEDDING_SERVICE is None:
+        return JSONResponse({"error": "EmbeddingService not initialized"}, status_code=503)
+    return JSONResponse(EMBEDDING_SERVICE.stats())
+
+@app.get("/acknowledgement/status")
+def acknowledgement_status_endpoint():
+    """Return whether the AcknowledgementEngine is running and its config."""
+    if ACKNOWLEDGEMENT_ENGINE is None:
+        return JSONResponse({"running": False, "reason": "not initialized"})
+    cfg = ACKNOWLEDGEMENT_ENGINE._cfg
+    return JSONResponse({
+        "running": True,
+        "enabled": cfg.enabled,
+        "probability": cfg.probability,
+        "voice": cfg.voice,
+    })
+
+@app.post("/acknowledgement/config")
+async def acknowledgement_config_endpoint(body: dict = {}):
+    """Update AcknowledgementEngine config at runtime."""
+    if ACKNOWLEDGEMENT_ENGINE is None:
+        return JSONResponse({"error": "AcknowledgementEngine not initialized"}, status_code=503)
+    if "enabled" in body:
+        ACKNOWLEDGEMENT_ENGINE.set_enabled(bool(body["enabled"]))
+    if "probability" in body:
+        ACKNOWLEDGEMENT_ENGINE.set_probability(float(body["probability"]))
+    return JSONResponse({"status": "ok"})
+
+@app.get("/agents")
+def agents_endpoint():
+    """Snapshot of all agents — mirrors AGENTS roster in agent_workspace.py"""
+    return JSONResponse({aid: _agent_metrics_message(aid) for aid in AGENT_REGISTRY})
+
+@app.get("/settings")
+def settings_get_endpoint():
+    return JSONResponse(RUNTIME_SETTINGS)
+
+@app.post("/settings")
+async def settings_post_endpoint(body: dict = {}):
+    apply_settings(body)
+    return JSONResponse(RUNTIME_SETTINGS)
+
+@app.post("/tool/{name}")
+async def tool_endpoint(name: str, body: dict = {}):
+    result = await dispatch_tool(name, body)
+    return {"result": result}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  BACKGROUND TASKS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_start_time = time.time()
+
+
+async def _metrics_broadcaster():
+    while True:
+        await asyncio.sleep(1.0)
+        if not manager._clients:
+            continue
+        try:
+            await manager.broadcast({"type": "metrics", **get_metrics()})
+        except Exception as e:
+            log.debug(f"Metrics broadcast error: {e}")
+
+
+async def _heartbeat():
+    while True:
+        try:
+            await asyncio.sleep(10)
+            if not manager._clients:
+                continue
+            await manager.broadcast({
+                "type":   "heartbeat",
+                "uptime": int(time.time() - _start_time),
+                "ts":     time.time(),
+            })
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.debug(f"Heartbeat error (non-fatal): {e}")
+
+
+async def _agent_metrics_broadcaster():
+    """Periodically push per-agent metrics so AgentWorkspace roster cards
+    and detail panel stay in sync, even when an agent is idle."""
+    while True:
+        await asyncio.sleep(3.0)
+        if not manager._clients:
+            continue
+        for agent_id in AGENT_REGISTRY:
+            try:
+                await manager.broadcast(_agent_metrics_message(agent_id))
+            except Exception as e:
+                log.debug(f"Agent metrics broadcast error: {e}")
+
+
+async def _prewarm_ollama() -> None:
+    """Fire-and-forget: send a trivial request to Ollama at boot so the
+    user's actually-selected model is loaded into memory *before* the
+    first real chat message needs it. Without this, the first request to
+    Ollama pays the full model-load cost (often 45-90s+ for a 4B model) on
+    top of whatever timeout the router allows.
+
+    v4.0 note: the router's Ollama instance starts with NO model loaded —
+    ModelSwitcher decides what's active. Prewarming the OLLAMA_MODEL env
+    var unconditionally would warm a model that may not even be the one
+    the user selected, while leaving their actual selection cold. So this
+    only prewarms when Ollama is the user's active provider, and warms
+    exactly the tag ModelSwitcher reports as current.
+    """
+    from models.switcher.model_switcher import ModelSwitcher
+    switcher = ModelSwitcher.get_instance()
+    if switcher.current_provider != "ollama":
+        log.debug("Ollama pre-warm skipped — active provider is not Ollama")
+        return
+
+    model_to_warm = switcher.current_model
+    if not model_to_warm:
+        log.debug("Ollama pre-warm skipped — no model tag set")
+        return
+
+    import aiohttp
+    url = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
+    payload = {
+        "model": model_to_warm,
+        "stream": False,
+        "messages": [{"role": "user", "content": "hi"}],
+        "options": {"num_predict": 1},
+    }
+    try:
+        timeout = aiohttp.ClientTimeout(total=180)  # cold load can be slow
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            t0 = time.monotonic()
+            async with session.post(url, json=payload) as resp:
+                await resp.read()
+                if resp.status == 200:
+                    log.info(f"Ollama pre-warmed ({model_to_warm}) in {time.monotonic()-t0:.1f}s")
+                else:
+                    log.warning(f"Ollama pre-warm got HTTP {resp.status} (model: {model_to_warm})")
+    except Exception as e:
+        log.info(f"Ollama pre-warm skipped (not running?): {e}")
+
+
+async def _daily_summary_scheduler() -> None:
+    """
+    Background task: runs DailySummary every 6 hours and exports to disk.
+    Also feeds the aggregated report into MemoryManager as a REFLECTION entry
+    so the ReflectionEngine can consume it on the next cycle.
+    Interval is 6 h (not midnight) so long-running server sessions get at
+    least one mid-session summary without having to wait until day rollover.
+    """
+    INTERVAL_S = 6 * 3600.0
+    await asyncio.sleep(60)          # short initial delay so startup is clean
+    while True:
+        if DAILY_SUMMARY is not None:
+            try:
+                report = DAILY_SUMMARY.generate_summary()
+                # Export to disk
+                try:
+                    paths = DAILY_SUMMARY.export_summary(
+                        report, output_dir="datastore/summaries"
+                    )
+                    log.info(
+                        f"DailySummary exported — {report.total_events} events, "
+                        f"paths={list(paths.values())}"
+                    )
+                except Exception as exp_exc:
+                    log.warning(f"DailySummary export failed: {exp_exc}")
+
+                # Persist to MemoryManager if available
+                if MEMORY_ROUTER is not None:
+                    try:
+                        import dataclasses as _dc
+                        payload = {
+                            "date_label": report.date_label,
+                            "total_events": report.total_events,
+                            "highlights": report.highlights,
+                            "insights": report.insights,
+                            "anomalies": report.anomalies,
+                        }
+                        await MEMORY_ROUTER.remember(
+                            content=str(payload),
+                        )
+                    except Exception as mr_exc:
+                        log.debug(f"DailySummary → MemoryRouter failed (non-fatal): {mr_exc}")
+
+                # Reset for next cycle
+                DAILY_SUMMARY.reset()
+            except Exception as exc:
+                log.warning(f"DailySummary scheduler error (non-fatal): {exc}")
+
+        await asyncio.sleep(INTERVAL_S)
+
+
+async def _reflection_trigger_scheduler() -> None:
+    """
+    Background task: publishes a 'reflection.trigger' event every 2 hours
+    so the ReflectionEngine (subscribed via EventBus in the full kernel path)
+    runs a periodic reflection cycle independently of manual triggers.
+
+    FIX: Guard added — only broadcast when at least one WebSocket client is
+    connected, preventing a spurious broadcast error that was being logged
+    every 2 h at startup (before any HUD client connected) and again whenever
+    all clients disconnected.  The Ollama fallback tier then received an
+    unexplained "error" state that caused it to be skipped unnecessarily.
+    """
+    INTERVAL_S = 2 * 3600.0
+    await asyncio.sleep(300)         # 5-minute initial delay
+    while True:
+        if manager._clients:          # only broadcast when someone is listening
+            try:
+                await manager.broadcast({
+                    "type": "reflection_trigger",
+                    "ts": time.time(),
+                    "source": "server.scheduler",
+                    "interval_s": INTERVAL_S,
+                })
+                log.info("Reflection trigger broadcast sent")
+            except Exception as exc:
+                log.debug(f"Reflection trigger broadcast failed: {exc}")
+        else:
+            log.debug("Reflection trigger: no clients connected — skipping broadcast")
+        await asyncio.sleep(INTERVAL_S)
+
+
+async def on_startup():
+    psutil.cpu_percent(interval=None)
+    psutil.cpu_percent(interval=None, percpu=True)
+
+    # ── Model router: initialize FIRST, with OLLAMA_HOST ───────────────────
+    # get_router() is a lazy singleton — whoever calls it first decides the
+    # ollama_url it's constructed with. Every other call site in this file
+    # (call_ai(), the WS handlers, health checks, the orchestrator wiring)
+    # calls get_router() with no arguments, so if nothing initializes the
+    # singleton explicitly here, ModelRouter.__init__'s ollama_url default
+    # ("http://localhost:11434") silently wins even when OLLAMA_HOST is set
+    # to something else. This bit the HUD's Ollama model list before: the
+    # discovery path and the router path could end up pointed at different
+    # hosts depending on call order, and any custom OLLAMA_HOST was ignored
+    # entirely. Doing it explicitly, first, here removes the ordering
+    # dependency.
+    try:
+        from models.router.model_router import get_router
+        get_router(ollama_url=OLLAMA_HOST)
+        log.info(f"ModelRouter pre-initialized with ollama_url={OLLAMA_HOST}")
+    except Exception as _router_exc:
+        log.warning(f"ModelRouter pre-init failed (non-fatal, will lazy-init later): {_router_exc}")
+
+    # ── Asyncio loop exception handler ────────────────────────────────────────
+    # By default, an unhandled exception inside an asyncio.create_task() coroutine
+    # is reported via the loop's exception handler — which on some uvicorn/Windows
+    # versions terminates the server. Override it to log-and-continue instead.
+    def _handle_task_exception(loop, context):
+        exc = context.get("exception")
+        msg = context.get("message", "unknown")
+        if exc is not None:
+            log.error(f"Unhandled background task exception (non-fatal): {exc!r} — {msg}")
+        else:
+            log.warning(f"Asyncio loop error (non-fatal): {msg}")
+
+    asyncio.get_event_loop().set_exception_handler(_handle_task_exception)
+
+    asyncio.create_task(_metrics_broadcaster())
+    asyncio.create_task(_heartbeat())
+    asyncio.create_task(_agent_metrics_broadcaster())
+    asyncio.create_task(_prewarm_ollama())
+    asyncio.create_task(_start_ngrok())
+    asyncio.create_task(_daily_summary_scheduler())
+    asyncio.create_task(_reflection_trigger_scheduler())
+
+    # Security: warn loudly if no WebSocket auth token is configured
+    if not SERVER_SECRET:
+        log.warning(
+            "JARVIS_SECRET is not set — WebSocket endpoint has NO authentication. "
+            "Set JARVIS_SECRET=<random-token> in .env before exposing to a network."
+        )
+
+    # ── Tool Registry (browser.*, web.*, fs.*, code.*, system.*, apps.*, etc.) ──
+    # ── Consolidated global declarations (all names assigned in this function) ──
+    # Python global is function-scoped but processed at parse time. One block at the
+    # top prevents the silent local-shadow bug if blocks are reordered in future edits.
+    global TOOL_REGISTRY, MEMORY_ROUTER, TASK_PLANNER, _SERVER_BUS, STT_ENGINE, TTS_ENGINE, ORCHESTRATOR
+    global ACTION_GUARD, HEALTH_MONITOR, METRICS_COLLECTOR
+    global _browser_tools, EMBEDDING_SERVICE, DAILY_SUMMARY, ACKNOWLEDGEMENT_ENGINE
+    global WAKE_WORD_MANAGER, VOICE_COORDINATOR, ACTIVITY_OBSERVER, VISION_PIPELINE
+    try:
+        from tools.registry.tool_registry import get_registry
+        from tools.registry.tool_registry_registration import register_all_tools
+        TOOL_REGISTRY = get_registry()
+        registered = register_all_tools(TOOL_REGISTRY, event_bus=None)
+        total = sum(len(v) for v in registered.values())
+        log.info(f"ToolRegistry: {total} tools registered across {len(registered)} modules")
+    except Exception as e:
+        log.error(f"ToolRegistry init failed: {e}")
+        TOOL_REGISTRY = None
+
+    # ── Phase 1 — Safety & Action Layer ──────────────────────────────────────
+    # PolicyEngine + PermissionManager + ActionGuard + TerminalManager +
+    # FileManager.  Wired into ToolRegistry.invoke() via the SecurityIntegration
+    # singleton — no second EventBus, no separate import chain.
+    #
+    # Ground-rule compliance:
+    #   • Non-fatal: each component wrapped in try/except; server still boots.
+    #   • One shared EventBus: _SERVER_BUS is passed in (created just above).
+    #   • Env-var gated: JARVIS_ENABLE_ACTION_GUARD (default True).
+    #   • Visible in /health: registers a HealthCheck below.
+    #   • Deny-by-default for destructive actions, allow for safe reads.
+    ACTION_GUARD = None
+    if JARVIS_ENABLE_ACTION_GUARD:
+        try:
+            from actions.security.security_integration import init_security_integration
+            ACTION_GUARD = await init_security_integration(event_bus=_SERVER_BUS)
+            if ACTION_GUARD is not None:
+                log.info(
+                    "Phase 1: Safety & Action Layer online",
+                    policy_engine=ACTION_GUARD.policy_engine is not None,
+                    permission_manager=ACTION_GUARD.permission_manager is not None,
+                    action_guard=ACTION_GUARD.action_guard is not None,
+                    terminal_manager=ACTION_GUARD.terminal_manager is not None,
+                    file_manager=ACTION_GUARD.file_manager is not None,
+                )
+                # Register Phase 1 health check so /health reflects it
+                if HEALTH_MONITOR is not None:
+                    from observability.health.health_monitor import HealthCheck as _HC1
+                    def _check_action_guard() -> bool:
+                        return (
+                            ACTION_GUARD is not None
+                            and ACTION_GUARD.action_guard is not None
+                        )
+                    HEALTH_MONITOR.register(_HC1(
+                        name="action_guard",
+                        check_fn=_check_action_guard,
+                        critical=False,
+                    ))
+                    await HEALTH_MONITOR.check_all()
+            else:
+                log.warning("Phase 1: SecurityIntegration returned None — action guard not active")
+        except Exception as _p1_exc:
+            log.warning("Phase 1: Safety & Action Layer init failed (non-fatal): %s", _p1_exc)
+            ACTION_GUARD = None
+    else:
+        log.info("Phase 1: Action Guard disabled (JARVIS_ENABLE_ACTION_GUARD=false)")
+
+    # ── Memory Router (working/episodic/semantic/vector) ─────────────────────
+    try:
+        from memory.router.memory_router import MemoryRouter
+        MEMORY_ROUTER = MemoryRouter()
+        MEMORY_ROUTER.inject(event_bus=None, model_router=None)
+        await MEMORY_ROUTER.start()
+        log.info("MemoryRouter started")
+    except Exception as e:
+        log.error(f"MemoryRouter init failed: {e}")
+        MEMORY_ROUTER = None
+
+    # ── Shared in-process EventBus ────────────────────────────────────────────
+    # Created once here so GoalManager, AcknowledgementEngine, STT_ENGINE,
+    # TTS_ENGINE, and any other server-side component that needs event
+    # publishing can share a single bus. FIXED: this used to be a function-
+    # local variable (_server_bus) that silently went out of scope at the
+    # end of on_startup(), so nothing outside this function could ever
+    # actually reuse it despite the comment above claiming otherwise.
+    _SERVER_BUS = None
+    try:
+        from kernel.event_bus.event_bus import EventBus
+        _SERVER_BUS = EventBus()
+        await _SERVER_BUS.start()
+        log.info("Server EventBus started")
+        # ── Relay agent workflow steps to WebSocket clients ───────────────────
+        async def _on_workflow_step(event):
+            try:
+                payload = event.payload if hasattr(event, 'payload') else event
+                await manager.broadcast({
+                    "type":    "agent_workflow_step",
+                    "agent":   payload.get("agent", ""),
+                    "step_id": payload.get("step_id", ""),
+                    "label":   payload.get("label", ""),
+                    "status":  payload.get("status", "active"),
+                    "detail":  payload.get("detail", ""),
+                })
+            except Exception:
+                pass
+        _SERVER_BUS.subscribe("agent.workflow.step", _on_workflow_step)
+        log.info("Workflow step relay subscribed")
+    except Exception as e:
+        log.warning(f"Server EventBus init failed (non-fatal): {e}")
+
+    # ── Health Monitor (Phase 0 — observability/health/health_monitor.py) ────
+    # Backs /health with real subsystem checks instead of a static "ok".
+    # Registered checks are deliberately cheap/synchronous-friendly — no
+    # outbound network calls (e.g. NOT ModelRouter.health_check_all(), which
+    # pings every provider's live API) since this runs on a 30s timer.
+    HEALTH_MONITOR = None
+    if JARVIS_ENABLE_HEALTH_MONITOR and _SERVER_BUS is not None:
+        try:
+            from observability.health.health_monitor import HealthMonitor, HealthCheck
+            _health_cfg = CONFIG.config.health if CONFIG is not None else None
+            HEALTH_MONITOR = HealthMonitor(
+                bus=_SERVER_BUS,
+                check_interval_s=(_health_cfg.check_interval_s if _health_cfg else 30),
+                degraded_threshold=(_health_cfg.degraded_threshold if _health_cfg else 0.8),
+                unhealthy_threshold=(_health_cfg.unhealthy_threshold if _health_cfg else 0.5),
+                window_size=(_health_cfg.history_window if _health_cfg else 10),
+            )
+
+            def _check_event_bus() -> bool:
+                return _SERVER_BUS is not None and bool(getattr(_SERVER_BUS, "_running", True))
+
+            def _check_tool_registry() -> bool:
+                return TOOL_REGISTRY is not None and len(TOOL_REGISTRY.list_tools(enabled_only=False)) > 0
+
+            def _check_memory_router() -> bool:
+                return MEMORY_ROUTER is not None
+
+            def _check_model_router() -> bool:
+                try:
+                    from models.router.model_router import get_router
+                    return len(get_router()._providers) > 0
+                except Exception:
+                    return False
+
+            HEALTH_MONITOR.register(HealthCheck(
+                name="event_bus", check_fn=_check_event_bus, critical=True,
+            ))
+            HEALTH_MONITOR.register(HealthCheck(
+                name="tool_registry", check_fn=_check_tool_registry, critical=False,
+            ))
+            HEALTH_MONITOR.register(HealthCheck(
+                name="memory_router", check_fn=_check_memory_router, critical=False,
+            ))
+            HEALTH_MONITOR.register(HealthCheck(
+                name="model_router", check_fn=_check_model_router, critical=True,
+            ))
+            await HEALTH_MONITOR.start()
+            await HEALTH_MONITOR.check_all()  # populate real status immediately, don't wait 30s
+            log.info("HealthMonitor started with 4 checks (event_bus, tool_registry, memory_router, model_router)")
+        except Exception as e:
+            log.warning(f"HealthMonitor init failed (non-fatal, /health falls back to static ok): {e}")
+            HEALTH_MONITOR = None
+    elif JARVIS_ENABLE_HEALTH_MONITOR:
+        log.warning("HealthMonitor skipped: EventBus unavailable (HealthMonitor requires a bus)")
+
+    # ── Metrics Collector (Phase 0 — observability/metrics/metrics_collector.py) ─
+    # Backs /metrics with real counters in addition to the existing CPU/RAM/
+    # disk snapshot. get_metrics() below is left untouched; this is additive.
+    METRICS_COLLECTOR = None
+    if JARVIS_ENABLE_METRICS_COLLECTOR:
+        try:
+            from observability.metrics.metrics_collector import MetricsCollector
+            METRICS_COLLECTOR = MetricsCollector.get()
+            log.info("MetricsCollector ready")
+        except Exception as e:
+            log.warning(f"MetricsCollector init failed (non-fatal): {e}")
+            METRICS_COLLECTOR = None
+
+    # ── STT / TTS engines — the canonical implementations ─────────────────────
+    # See the module-level comment near STT_ENGINE/TTS_ENGINE for why this
+    # replaced server.py's previous hand-rolled Groq/edge-tts/faster-whisper/
+    # Kokoro calls. Both engines work fine with bus=None (their request/
+    # response methods used below — transcribe_blob()/synthesize_only() —
+    # don't touch the EventBus at all), but we pass the real bus when
+    # available so any future bus-based features (e.g. live status events)
+    # work without further changes.
+    try:
+        from perception.speech.stt import STTEngine, STTConfig
+        STT_ENGINE = STTEngine(
+            bus=_SERVER_BUS,
+            config=STTConfig(
+                groq_api_key=GROQ_KEY,
+                language="",  # "" → auto-detect (en/hi/ne/...) — do NOT force "en"
+                local_model=FASTER_WHISPER_MODEL,
+            ),
+        )
+        STT_ENGINE.start()
+        log.info("STTEngine initialised (server.py)", groq_available=bool(GROQ_KEY))
+    except Exception as e:
+        log.error(f"STTEngine init failed: {e}")
+        STT_ENGINE = None
+
+    try:
+        from perception.voice.tts import TTSEngine, TTSConfig
+        TTS_ENGINE = TTSEngine(
+            bus=_SERVER_BUS,
+            config=TTSConfig(
+                kokoro_model_path=KOKORO_MODEL,
+                kokoro_voices_path=KOKORO_VOICES,
+            ),
+        )
+        TTS_ENGINE.start()
+        log.info("TTSEngine initialised (server.py)")
+    except Exception as e:
+        log.error(f"TTSEngine init failed: {e}")
+        TTS_ENGINE = None
+
+    # ── Task Planner (PlanningEngine + GoalManager) ───────────────────────────
+    try:
+        from cognition.planning.goal_manager import GoalManager
+        from cognition.planning.task_planner import PlanningEngine
+        gm = GoalManager()
+        if _SERVER_BUS is not None:
+            gm.inject(_SERVER_BUS)   # Fix #4: wire bus so goal events are published
+        TASK_PLANNER = PlanningEngine(gm)
+        log.info("TaskPlanner (PlanningEngine) initialised")
+    except Exception as e:
+        log.error(f"TaskPlanner init failed: {e}")
+        TASK_PLANNER = None
+
+    # ── Phase 2 — Kernel Orchestrator (cognition + multi-agent execution) ────
+    # Wired only when JARVIS_ENABLE_ORCHESTRATOR=true.
+    # Shares _SERVER_BUS, MEMORY_ROUTER, and TOOL_REGISTRY — no second copies.
+    # The specialist agent classes (ResearchAgent, EngineeringAgent, …) are
+    # instantiated inside Orchestrator._start_agents(); each registers itself
+    # in the AgentRegistry and subscribes to its own EventBus topics.
+    #
+    # Bridge: agent.metrics.updated events are forwarded into the existing
+    # AGENT_REGISTRY dict so the HUD UI keeps showing live agent stats
+    # regardless of whether the orchestrator is enabled.
+    ORCHESTRATOR = None
+    if JARVIS_ENABLE_ORCHESTRATOR and _SERVER_BUS is not None and MEMORY_ROUTER is not None:
+        try:
+            from models.router.model_router import get_router as _get_model_router
+            _model_router = _get_model_router()
+        except Exception as _mr_exc:
+            log.warning(f"Phase 2: could not get ModelRouter ({_mr_exc}) — orchestrator will run without LLM routing")
+            _model_router = None
+
+        try:
+            from kernel.orchestrator.orchestrator import Orchestrator
+            ORCHESTRATOR = Orchestrator(
+                event_bus=_SERVER_BUS,
+                model_router=_model_router,
+                memory_router=MEMORY_ROUTER,
+                tool_registry=TOOL_REGISTRY,
+            )
+            await ORCHESTRATOR.start()
+
+            # ── Bridge: relay agent.metrics.updated → AGENT_REGISTRY ────────
+            # Keeps the HUD agent cards (which read from AGENT_REGISTRY) alive
+            # with real live data from the running agent classes.
+            _AGENT_NAME_MAP: dict[str, str] = {
+                # agent.name (set in super().__init__) → AGENT_REGISTRY key
+                # These are the actual canonical names used inside each agent class:
+                "athena":      "athena",      # ResearchAgent
+                "vision_eng":  "vision_eng",  # EngineeringAgent
+                "ashura":      "ashura",      # AnalysisAgent
+                "herald":      "herald",      # CommunicationAgent
+                "friday":      "friday",      # AutomationAgent
+                "vision":      "vision_eng",  # VisionAgent (uses "vision", maps to "vision_eng" in AGENT_REGISTRY)
+                "oracle":      "oracle",      # PlanningAgent
+                "coordinator": "coordinator", # CoordinatorAgent
+            }
+
+            async def _on_agent_metrics(event) -> None:
+                try:
+                    p = event.payload if hasattr(event, "payload") else event
+                    raw_name = p.get("agent_name", p.get("agent", ""))
+                    reg_key = _AGENT_NAME_MAP.get(raw_name, raw_name)
+                    if reg_key not in AGENT_REGISTRY:
+                        return
+                    rec = AGENT_REGISTRY[reg_key]
+                    # MetricsPublisherMixin nests everything inside p["metrics"]:
+                    #   {"agent_name": ..., "current_task": ..., "metrics": {"tasks_done": ..., "status": ..., ...}}
+                    metrics = p.get("metrics", {})
+                    # Sync status and task description
+                    if "status" in metrics:
+                        rec["status"] = metrics["status"]
+                    if p.get("current_task"):
+                        rec["current_task"] = p["current_task"][:60]
+                    # Sync counters
+                    if "tasks_done" in metrics:
+                        rec["tasks_done"] = metrics["tasks_done"]
+                    if "tasks_failed" in metrics:
+                        rec["tasks_failed"] = metrics["tasks_failed"]
+                    # Merge any other agent-specific keys into the nested metrics dict
+                    for k, v in metrics.items():
+                        if k not in ("tasks_done", "tasks_failed", "status", "uptime_s"):
+                            rec["metrics"][k] = v
+                except Exception:
+                    pass
+
+            _SERVER_BUS.subscribe("agent.metrics.updated", _on_agent_metrics)
+
+            # ── Bridge: relay agent goal lifecycle → HUD workflow steps ─────
+            async def _on_agent_goal_completed(event) -> None:
+                try:
+                    p = event.payload if hasattr(event, "payload") else event
+                    raw_name = p.get("agent_name", p.get("agent", ""))
+                    reg_key = _AGENT_NAME_MAP.get(raw_name, raw_name)
+                    if reg_key in AGENT_REGISTRY:
+                        AGENT_REGISTRY[reg_key]["status"] = "idle"
+                        AGENT_REGISTRY[reg_key]["tasks_done"] += 1
+                        AGENT_REGISTRY[reg_key]["current_task"] = ""
+                except Exception:
+                    pass
+
+            async def _on_agent_goal_failed(event) -> None:
+                try:
+                    p = event.payload if hasattr(event, "payload") else event
+                    raw_name = p.get("agent_name", p.get("agent", ""))
+                    reg_key = _AGENT_NAME_MAP.get(raw_name, raw_name)
+                    if reg_key in AGENT_REGISTRY:
+                        AGENT_REGISTRY[reg_key]["status"] = "idle"
+                        AGENT_REGISTRY[reg_key]["tasks_failed"] += 1
+                        AGENT_REGISTRY[reg_key]["current_task"] = ""
+                except Exception:
+                    pass
+
+            _SERVER_BUS.subscribe("agent.goal_completed", _on_agent_goal_completed)
+            _SERVER_BUS.subscribe("agent.goal_failed", _on_agent_goal_failed)
+
+            # Register a health check for the orchestrator so /health reflects it.
+            if HEALTH_MONITOR is not None:
+                from observability.health.health_monitor import HealthCheck as _HC
+                def _check_orchestrator() -> bool:
+                    return ORCHESTRATOR is not None and bool(ORCHESTRATOR.agents)
+                HEALTH_MONITOR.register(_HC(
+                    name="orchestrator",
+                    check_fn=_check_orchestrator,
+                    critical=False,
+                ))
+                await HEALTH_MONITOR.check_all()
+
+            log.info(
+                "Phase 2: Orchestrator started",
+                agents=list(ORCHESTRATOR.agents.keys()),
+            )
+        except Exception as _orch_exc:
+            log.warning(
+                f"Phase 2: Orchestrator init failed (non-fatal, falling back to "
+                f"pre-Phase-2 single-LLM routing): {_orch_exc}",
+                exc_info=True,
+            )
+            ORCHESTRATOR = None
+    elif JARVIS_ENABLE_ORCHESTRATOR:
+        log.warning(
+            "Phase 2: Orchestrator skipped — EventBus or MemoryRouter not available "
+            "(Orchestrator requires both). Set JARVIS_ENABLE_ORCHESTRATOR=false to silence this."
+        )
+
+    # ── P-12: Browser Tools (Playwright) ─────────────────────────────────────
+    # browser_tools.py manages its own PlaywrightEngine singleton via _get_engine().
+    # We just import the module and call _get_engine() once to warm it up.
+    # There is no BrowserTools class — all tools are module-level functions.
+    try:
+        from tools.browser_tools import browser_tools as _bt_module
+        engine = _bt_module._get_engine()   # warm up; creates PlaywrightEngine
+        # Only call start() if not already running (PlaywrightEngine has no guard)
+        already_started = getattr(engine, "_playwright", None) is not None
+        if not already_started and hasattr(engine, "start") and asyncio.iscoroutinefunction(engine.start):
+            await engine.start()
+        _browser_tools = _bt_module
+        is_real = not isinstance(engine, _bt_module._StubEngine)
+        if is_real:
+            log.info("Browser tools: Playwright engine warmed up")
+        else:
+            log.warning("Browser tools: running in stub mode (Playwright not available)")
+    except Exception as e:
+        log.warning(f"Browser tools: init skipped ({type(e).__name__}: {e})")
+        _browser_tools = None
+
+    # ── Embedding Service (SentenceTransformers → OpenAI API → TF-IDF) ───────
+    # Reuse the instance already registered by Bootstrap in the DI container
+    # so all agents, ReasoningEngine, and the HTTP endpoints share one singleton
+    # (one loaded model in memory, one LRU cache).  Fall back to creating a
+    # fresh instance only if the DI container isn't available (e.g. server.py
+    # is run standalone without Bootstrap).
+    try:
+        try:
+            from boot.dependency_container import DependencyContainer
+            _di = DependencyContainer.get_instance()
+            EMBEDDING_SERVICE = _di.try_resolve("embedding_service")
+        except Exception:
+            EMBEDDING_SERVICE = None
+
+        if EMBEDDING_SERVICE is None:
+            from models.embeddings.embedding_service import EmbeddingService
+            EMBEDDING_SERVICE = EmbeddingService()
+
+        # Force lazy init now so the first embed() call isn't slow
+        await EMBEDDING_SERVICE.embed("jarvis system ready")
+        log.info(f"EmbeddingService ready — backend: {EMBEDDING_SERVICE.stats()['backend']}")
+    except Exception as e:
+        log.warning(f"EmbeddingService init failed (non-fatal): {e}")
+        EMBEDDING_SERVICE = None
+
+    # ── Daily Summary (event aggregator / intelligence compressor) ────────────
+    try:
+        from memory.summaries.daily_summary import DailySummary
+        DAILY_SUMMARY = DailySummary()
+        log.info("DailySummary initialized")
+    except Exception as e:
+        log.warning(f"DailySummary init failed (non-fatal): {e}")
+        DAILY_SUMMARY = None
+
+    # ── Acknowledgement Engine (backchannel filler phrases over TTS) ──────────
+    # Reuses _server_bus created above — no second EventBus needed.
+    # Windows note: perception.speech.acknowledgement needs project root on sys.path
+    # which is now guaranteed by the top-of-file sys.path injection.
+    try:
+        import importlib as _il
+        _ack_mod = _il.import_module("perception.speech.acknowledgement")
+        AcknowledgementEngine = _ack_mod.AcknowledgementEngine
+        AcknowledgementConfig = _ack_mod.AcknowledgementConfig
+        # Use the shared _SERVER_BUS (module-level) — NOT a local variable.
+        # Using a local "_server_bus" here silently created an orphaned second
+        # EventBus that nothing else subscribed to, breaking ack engine events.
+        _ack_bus = _SERVER_BUS
+        if _ack_bus is None:
+            from kernel.event_bus.event_bus import EventBus
+            _ack_bus = EventBus()
+            await _ack_bus.start()
+            _SERVER_BUS = _ack_bus   # keep module ref consistent
+        _ack_cfg = AcknowledgementConfig(enabled=True, probability=0.82)
+        ACKNOWLEDGEMENT_ENGINE = AcknowledgementEngine(
+            bus=_ack_bus,
+            tts_router=None,   # server.py uses edge-tts directly
+            config=_ack_cfg,
+        )
+        log.info("AcknowledgementEngine initialized")
+    except Exception as e:
+        log.warning(f"AcknowledgementEngine init failed (non-fatal): {type(e).__name__}: {e}")
+        ACKNOWLEDGEMENT_ENGINE = None
+
+    # ── Phase 3 — Always-listening wake-word pipeline ─────────────────────────
+    # Ground-rule compliance:
+    #   • Non-fatal: each component wrapped in try/except; server still boots.
+    #   • One shared EventBus: _SERVER_BUS is passed everywhere.
+    #   • Env-var gated: JARVIS_ENABLE_ALWAYS_LISTENING (default False).
+    #   • Additive: existing push-to-talk (stt_audio WS message) is UNCHANGED.
+    #   • Visible in /health: registers a HealthCheck when started.
+    #
+    # Architecture:
+    #   MicrophoneEngine (audio source, manages its own internal audio_queue)
+    #     ↓ _mic.audio_queue (primary) + subscribe_audio_queue() fanout
+    #   HotwordDetector (reads _mic.audio_queue → fires HOTWORD_DETECTED)
+    #   WakeListener    (reads _mic.audio_queue → IDLE→CANDIDATE→ARMED→LISTENING)
+    #     ↓ LISTENING_ENDED event with raw PCM
+    #   STTRouter → shared STT_ENGINE → STT_TRANSCRIPTION_FINAL event
+    #   VoiceCoordinator → voice.utterance.received event
+    #     ↓ [_handle_voice_utterance subscriber below]
+    #     ↓ calls call_ai() → publishes voice.response.ready
+    #   TTSRouter → shared TTS_ENGINE → audio playback
+
+    WAKE_WORD_MANAGER = None
+    VOICE_COORDINATOR = None
+
+    if JARVIS_ENABLE_ALWAYS_LISTENING and _SERVER_BUS is not None:
+        try:
+            import queue as _queue_mod
+            from perception.speech.microphone import MicrophoneEngine, MicConfig
+            from perception.speech.noise_calibrator import NoiseCalibrator
+            from perception.speech.hotword import HotwordDetector, HotwordConfig
+            from perception.speech.wake_listener import WakeListener, WakeListenerConfig, VoiceMode
+            from perception.speech.stt_router import STTRouter
+            from perception.speech.tts_router import TTSRouter as _TTSRouter
+            from perception.speech.interrupt_detector import InterruptDetector
+            from perception.speech.voice_coordinator import VoiceCoordinator
+            from wakeword.manager import WakeWordManager
+
+            # ── Microphone ─────────────────────────────────────────────────
+            # FIX 1: Constructor is (bus, config: MicConfig | None = None).
+            # No audio_queue param — MicrophoneEngine owns its internal queue.
+            # Config class is MicConfig (not MicrophoneConfig); has no chunk_ms field.
+            _mic = MicrophoneEngine(
+                bus=_SERVER_BUS,
+                config=MicConfig(sample_rate=16_000),
+            )
+
+            # ── Noise calibration (one-shot at boot, non-blocking) ──────────
+            # FIX 2: Constructor is (config: CalibratorConfig | None = None).
+            # Method is .run() — no parameters. Duration is set in CalibratorConfig.
+            try:
+                _calibrator = NoiseCalibrator()
+                _cal_result = _calibrator.run()
+                log.info(
+                    "Phase 3: noise calibration complete",
+                    noise_floor=round(getattr(_cal_result, "noise_floor", 0.0), 4),
+                    environment=getattr(_cal_result, "environment", "unknown"),
+                )
+            except Exception as _cal_exc:
+                log.debug(f"Phase 3: noise calibration skipped ({_cal_exc})")
+
+            # ── Hotword Detector ────────────────────────────────────────────
+            # FIX 2: Pass _mic.audio_queue (the engine's real internal queue),
+            # not a separately created _p3_audio_queue that was never wired in.
+            _hotword = HotwordDetector(
+                bus=_SERVER_BUS,
+                audio_queue=_mic.audio_queue,
+                config=HotwordConfig(use_livekit=True),
+            )
+
+            # ── Wake Listener ───────────────────────────────────────────────
+            # FIX 3: WakeListener reads the primary queue for IDLE-phase ambient
+            # listening. Pass _mic.audio_queue here, then also register its own
+            # private _mic_audio_queue for fanout via subscribe_audio_queue().
+            _wake_cfg = WakeListenerConfig(mode=VoiceMode.WAKE_WORD)
+            _wake_listener = WakeListener(
+                bus=_SERVER_BUS,
+                audio_queue=_mic.audio_queue,
+                config=_wake_cfg,
+            )
+
+            # Register WakeListener's own private queue for independent fanout —
+            # this gives it every chunk without competing with HotwordDetector.
+            if hasattr(_mic, "subscribe_audio_queue"):
+                _mic.subscribe_audio_queue(_wake_listener._mic_audio_queue)
+
+            # ── STT Router ──────────────────────────────────────────────────
+            # Routes LISTENING_ENDED → shared STT_ENGINE → STT_TRANSCRIPTION_FINAL
+            _stt_router = STTRouter(
+                event_bus=_SERVER_BUS,
+                engine=STT_ENGINE,
+                groq_api_key=GROQ_KEY,
+            )
+
+            # ── TTS Router ──────────────────────────────────────────────────
+            # FIX 4: kwarg is `default_engine`, not `engine`.
+            _tts_router = _TTSRouter(
+                event_bus=_SERVER_BUS,
+                default_engine=TTS_ENGINE,
+            )
+
+            # ── Interrupt Detector ──────────────────────────────────────────
+            _interrupt = InterruptDetector(event_bus=_SERVER_BUS)
+
+            # ── Voice Coordinator ───────────────────────────────────────────
+            VOICE_COORDINATOR = VoiceCoordinator(
+                event_bus=_SERVER_BUS,
+                tts_router=_tts_router,
+                interrupt_detector=_interrupt,
+            )
+
+            # ── WakeWordManager (runtime enable/disable) ────────────────────
+            WAKE_WORD_MANAGER = WakeWordManager(
+                bus=_SERVER_BUS,
+                mic=_mic,
+                hotword_detector=_hotword,
+                wake_listener=_wake_listener,
+                config=CONFIG,
+            )
+
+            # ── Bridge: voice.utterance.received → call_ai() → voice.response.ready ──
+            # VoiceCoordinator dispatches voice.utterance.received when STT completes.
+            # This subscriber handles it: calls the existing call_ai() pipeline
+            # (with memory context) and publishes voice.response.ready so
+            # VoiceCoordinator drives TTS for the response.
+            async def _handle_voice_utterance(event) -> None:
+                payload = event.payload if hasattr(event, "payload") else event
+                run_id  = payload.get("run_id", "")
+                text    = payload.get("text", "").strip()
+                lang    = payload.get("language", "en") or "en"
+                if not text:
+                    return
+                try:
+                    reply, provider = await call_ai("oracle", text)
+                    log.info(f"Phase 3: voice AI response via {provider} ({len(reply)} chars)")
+                    if METRICS_COLLECTOR is not None:
+                        METRICS_COLLECTOR.increment("voice_pipeline_completions_total")
+                    from kernel.event_bus.event_bus import Event as _Ev, Priority as _Pr
+                    await _SERVER_BUS.publish(_Ev(
+                        event_type="voice.response.ready",
+                        source="server.voice_bridge",
+                        payload={"run_id": run_id, "text": reply, "language": lang},
+                        priority=_Pr.HIGH,
+                    ))
+                    # Also broadcast to any HUD WebSocket clients so the chat
+                    # panel shows the voice conversation in real time.
+                    await manager.broadcast({
+                        "type": "chat_reply", "agent": "oracle",
+                        "text": reply, "provider": provider,
+                        "source": "voice_pipeline",
+                    })
+                    await manager.broadcast({
+                        "type": "voice_utterance_ack",
+                        "transcript": text, "reply": reply,
+                        "language": lang, "provider": provider,
+                    })
+                except Exception as _ve:
+                    log.warning(f"Phase 3: voice utterance handler error: {_ve}")
+
+            _SERVER_BUS.subscribe("voice.utterance.received", _handle_voice_utterance)
+
+            # ── Start everything ────────────────────────────────────────────
+            await _stt_router.start()
+            await _tts_router.start()
+            await VOICE_COORDINATOR.start()
+
+            # Start mic + hotword + wake listener via WakeWordManager
+            _mic.start()
+            WAKE_WORD_MANAGER.enable()
+
+            # Register Phase 3 health check
+            if HEALTH_MONITOR is not None:
+                from observability.health.health_monitor import HealthCheck as _HC3
+                def _check_voice_pipeline() -> bool:
+                    return (
+                        VOICE_COORDINATOR is not None
+                        and getattr(VOICE_COORDINATOR, "_running", False)
+                        and WAKE_WORD_MANAGER is not None
+                        and WAKE_WORD_MANAGER.is_running()
+                    )
+                HEALTH_MONITOR.register(_HC3(
+                    name="voice_pipeline",
+                    check_fn=_check_voice_pipeline,
+                    critical=False,
+                ))
+                await HEALTH_MONITOR.check_all()
+
+            log.info(
+                "Phase 3: always-listening voice pipeline online",
+                hotword="hey jarvis",
+                stt=STT_ENGINE.__class__.__name__ if STT_ENGINE else "None",
+                tts=TTS_ENGINE.__class__.__name__ if TTS_ENGINE else "None",
+            )
+
+        except Exception as _p3_exc:
+            log.warning(
+                f"Phase 3: always-listening init failed (non-fatal, push-to-talk unaffected): {_p3_exc}",
+                exc_info=True,
+            )
+            WAKE_WORD_MANAGER = None
+            VOICE_COORDINATOR = None
+    else:
+        if JARVIS_ENABLE_ALWAYS_LISTENING:
+            log.warning(
+                "Phase 3: always-listening skipped — EventBus unavailable. "
+                "Set JARVIS_ENABLE_ALWAYS_LISTENING=false to silence this."
+            )
+        else:
+            log.info("Phase 3: always-listening disabled (JARVIS_ENABLE_ALWAYS_LISTENING=false)")
+
+    # ── Phase 3 — VisionPipeline + ActivityObserver (feeds ProactiveEngine) ──
+    # VisionPipeline captures screen frames and publishes perception.vision.*
+    # events. ActivityObserver polls active windows, idle time, and processes;
+    # publishes perception.activity.* events. ProactiveEngine (Phase 2) consumes
+    # activity snapshots when the orchestrator is enabled. Both non-fatal standalone.
+    ACTIVITY_OBSERVER = None
+    VISION_PIPELINE = None
+
+    if JARVIS_ENABLE_VISION_PIPELINE and _SERVER_BUS is not None:
+        # ── VisionPipeline ─────────────────────────────────────────────────
+        try:
+            from perception.vision.vision_pipeline import VisionPipeline
+            _model_router_for_vision = None
+            try:
+                from models.router.model_router import get_router as _get_mr_v
+                _model_router_for_vision = _get_mr_v()
+            except Exception:
+                pass
+            VISION_PIPELINE = VisionPipeline(
+                event_bus=_SERVER_BUS,
+                model_router=_model_router_for_vision,
+                capture_interval=2.0,
+                auto_capture=False,   # on-demand only; avoid continuous CPU load
+            )
+            await VISION_PIPELINE.start()
+
+            if HEALTH_MONITOR is not None:
+                from observability.health.health_monitor import HealthCheck as _HCV
+                def _check_vision_pipeline() -> bool:
+                    return VISION_PIPELINE is not None and getattr(VISION_PIPELINE, "_running", False)
+                HEALTH_MONITOR.register(_HCV(
+                    name="vision_pipeline",
+                    check_fn=_check_vision_pipeline,
+                    critical=False,
+                ))
+                await HEALTH_MONITOR.check_all()
+
+            log.info("Phase 3: VisionPipeline started (auto_capture=False, on-demand only)")
+        except Exception as _vp_exc:
+            log.warning(f"Phase 3: VisionPipeline init failed (non-fatal): {_vp_exc}")
+            VISION_PIPELINE = None
+
+        # ── ActivityObserver ───────────────────────────────────────────────
+        try:
+            from perception.observation.activity_observer import ActivityObserver
+            ACTIVITY_OBSERVER = ActivityObserver(
+                event_bus=_SERVER_BUS,
+                poll_interval=10.0,   # every 10 s — lightweight
+                idle_threshold=60.0,
+                track_processes=True,
+            )
+            await ACTIVITY_OBSERVER.start()
+
+            # If ProactiveEngine is accessible via Orchestrator, subscribe it
+            # to activity snapshots so it gets a live context signal.
+            if ORCHESTRATOR is not None:
+                try:
+                    _proactive = getattr(ORCHESTRATOR, "_proactive_engine", None)
+                    if _proactive is None:
+                        _proactive = getattr(ORCHESTRATOR, "proactive_engine", None)
+
+                    if _proactive is not None:
+                        async def _on_activity_snapshot(event) -> None:
+                            try:
+                                payload = event.payload if hasattr(event, "payload") else event
+                                _proactive.observe_decision(type("_D", (), {
+                                    "score": 0.8, "confidence": "medium",
+                                    "reasoning": str(payload.get("active_window", "")),
+                                    "action": "activity_snapshot",
+                                })())
+                            except Exception:
+                                pass
+                        _SERVER_BUS.subscribe(
+                            ActivityObserver.EVT_SNAPSHOT, _on_activity_snapshot
+                        )
+                        log.info("Phase 3: ActivityObserver → ProactiveEngine bridge active")
+                except Exception as _pe_exc:
+                    log.debug(f"Phase 3: ProactiveEngine bridge skipped ({_pe_exc})")
+
+            log.info("Phase 3: ActivityObserver started (poll_interval=10s)")
+        except Exception as _ao_exc:
+            log.warning(f"Phase 3: ActivityObserver init failed (non-fatal): {_ao_exc}")
+            ACTIVITY_OBSERVER = None
+    prov: list[str] = []
+    if GROQ_KEY:   prov.append("Groq ✓")
+    if _qwen_openvino_enabled(): prov.append("Qwen-OpenVINO (local)")
+    if GEMINI_KEY: prov.append("Gemini ✓")
+    prov.append(f"Ollama/{OLLAMA_MODEL} (local fallback)")
+
+    log.info("=" * 62)
+    log.info("  J.A.R.V.I.S  HTML HUD  BACKEND  ONLINE")
+    log.info(f"  WS/HTTP:   ws://{HOST}:{PORT}/ws")
+    log.info(f"  AI:        {' → '.join(prov)}")
+    log.info(f"  STT:       Groq Whisper → faster-whisper/{FASTER_WHISPER_MODEL}")
+    log.info(f"  TTS:       edge-tts → Kokoro ONNX")
+    log.info(f"  Memory:    {MEMORY_DB}")
+    log.info("=" * 62)
+
+
+# ── Phase 3 — Graceful shutdown (updated from Phase 2) ───────────────────────
+async def on_shutdown():
+    """
+    Gracefully stop all phased subsystems on server exit.
+    Phase 3 components (voice pipeline, vision, activity observer) are stopped
+    first, then Phase 2 (Orchestrator), then Phase 1 (Action Guard).
+    All subsystems are non-fatal — errors are logged and shutdown continues.
+    """
+    global ACTION_GUARD, ORCHESTRATOR
+    global WAKE_WORD_MANAGER, VOICE_COORDINATOR, ACTIVITY_OBSERVER, VISION_PIPELINE
+
+    # ── Phase 3: always-listening voice pipeline ─────────────────────────────
+    if ACTIVITY_OBSERVER is not None:
+        try:
+            await ACTIVITY_OBSERVER.stop()
+            log.info("Phase 3: ActivityObserver stopped")
+        except Exception as exc:
+            log.warning(f"Phase 3: ActivityObserver stop() raised (non-fatal): {exc}")
+        ACTIVITY_OBSERVER = None
+
+    if VISION_PIPELINE is not None:
+        try:
+            await VISION_PIPELINE.stop()
+            log.info("Phase 3: VisionPipeline stopped")
+        except Exception as exc:
+            log.warning(f"Phase 3: VisionPipeline stop() raised (non-fatal): {exc}")
+        VISION_PIPELINE = None
+
+    if VOICE_COORDINATOR is not None:
+        try:
+            await VOICE_COORDINATOR.stop()
+            log.info("Phase 3: VoiceCoordinator stopped")
+        except Exception as exc:
+            log.warning(f"Phase 3: VoiceCoordinator stop() raised (non-fatal): {exc}")
+        VOICE_COORDINATOR = None
+
+    if WAKE_WORD_MANAGER is not None:
+        try:
+            WAKE_WORD_MANAGER.disable()
+            log.info("Phase 3: WakeWordManager disabled")
+        except Exception as exc:
+            log.warning(f"Phase 3: WakeWordManager disable() raised (non-fatal): {exc}")
+        WAKE_WORD_MANAGER = None
+
+    # ── Phase 1: Safety & Action Layer ───────────────────────────────────────
+    # FIX 7: was missing the `if ACTION_GUARD is not None:` guard, which caused
+    # a crash at shutdown when ACTION_GUARD was never initialised.
+    if ACTION_GUARD is not None:
+        try:
+            await ACTION_GUARD.stop()
+            log.info("Phase 1: Safety & Action Layer shut down cleanly")
+        except Exception as exc:
+            log.warning(f"Phase 1: ActionGuard stop() raised (non-fatal): {exc}")
+        ACTION_GUARD = None
+
+    # ── Phase 2: Orchestrator ─────────────────────────────────────────────────
+    if ORCHESTRATOR is not None:
+        try:
+            await ORCHESTRATOR.stop()
+            log.info("Phase 2: Orchestrator shut down cleanly")
+        except Exception as exc:
+            log.warning(f"Phase 2: Orchestrator stop() raised (non-fatal on shutdown): {exc}")
+        ORCHESTRATOR = None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ENTRY POINT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _install_shutdown_diagnostics():
+    """
+    Log exactly which OS signal triggered a shutdown, and dump all thread
+    stacks at that instant. uvicorn's default signal handler just sets an
+    internal should_exit flag and prints 'Shutting down' — it never tells
+    you *why*. This wraps the handler so the cause is visible in the log
+    instead of looking like a silent/unexplained exit.
+    """
+    import sys
+    import signal as _signal
+    import traceback as _traceback
+    import faulthandler as _faulthandler
+
+    _SIGNAL_NAMES = {
+        getattr(_signal, n): n
+        for n in dir(_signal)
+        if n.startswith("SIG") and not n.startswith("SIG_")
+    }
+
+    def _handler(signum, frame):
+        name = _SIGNAL_NAMES.get(signum, str(signum))
+        log.warning(f"Shutdown signal received: {name} ({signum}) — dumping thread stacks for diagnosis")
+        try:
+            _faulthandler.dump_traceback(file=sys.stdout)
+        except Exception:
+            log.warning("Thread stack dump:\n" + "".join(_traceback.format_stack(frame)))
+        # Re-raise the default behavior uvicorn/Python expects.
+        raise KeyboardInterrupt()
+
+    for sig in (_signal.SIGINT, _signal.SIGTERM):
+        try:
+            _signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            pass  # not available on this platform/thread
+
+    # CTRL_CLOSE_EVENT / CTRL_LOGOFF_EVENT / CTRL_SHUTDOWN_EVENT (Windows only):
+    # these fire when the *console window* closes, the user logs off, or the
+    # OS shuts down — none of which are a normal Ctrl+C. Windows delivers
+    # these via a separate console control handler, not via signal.signal().
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            _CTRL_NAMES = {
+                0: "CTRL_C_EVENT",
+                1: "CTRL_BREAK_EVENT",
+                2: "CTRL_CLOSE_EVENT (console window closed)",
+                5: "CTRL_LOGOFF_EVENT (user logged off)",
+                6: "CTRL_SHUTDOWN_EVENT (OS shutting down)",
+            }
+
+            @ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
+            def _win_console_handler(ctrl_type):
+                log.warning(
+                    f"Windows console control event received: "
+                    f"{_CTRL_NAMES.get(ctrl_type, ctrl_type)} — this is what is killing the process, "
+                    f"not application code."
+                )
+                return False  # let default handling continue (don't block OS shutdown)
+
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(_win_console_handler, True)
+            # Keep a reference alive so it isn't garbage-collected.
+            _install_shutdown_diagnostics._win_handler_ref = _win_console_handler
+        except Exception as exc:
+            log.warning(f"Could not install Windows console control handler: {exc}")
+
+
+if __name__ == "__main__":
+    _install_shutdown_diagnostics()
+    uvicorn.run(
+        "server:app",
+        host=HOST,
+        port=PORT,
+        log_level="info",
+        reload=False,
+    )

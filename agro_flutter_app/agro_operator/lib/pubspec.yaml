@@ -1,0 +1,46 @@
+name: jarvis_agro_operator
+description: JARVIS AGRO — Nawal Parasi family business operator app
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # WebSocket + HTTP
+  web_socket_channel: ^2.4.0
+  http: ^1.2.0
+
+  # Local offline storage
+  sqflite: ^2.3.0
+  path_provider: ^2.1.2
+  shared_preferences: ^2.2.2
+
+  # State management
+  provider: ^6.1.2
+
+  # File sharing & open
+  share_plus: ^7.2.2
+  open_filex: ^4.3.4
+
+  # i18n
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.19.0
+
+  # Voice (device mic → server STT)
+  record: ^5.1.0
+  permission_handler: ^11.3.0
+
+  # UI icons
+  cupertino_icons: ^1.0.8
+
+  # PIN hashing for auth_service (SHA-256)
+  crypto: ^3.0.3
+
+flutter:
+  uses-material-design: true
+  generate: true

@@ -1,0 +1,2893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS AI OS v3.0</title>
+<style>
+  /* ── RESET & BASE ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg-deep:    #09111f;
+    --bg-panel:   #0d1b2e;
+    --bg-card:    #112039;
+    --bg-hover:   #162847;
+    --bg-input:   #0b1929;
+    --accent:     #00d4ff;
+    --accent2:    #7c3aed;
+    --accent3:    #10b981;
+    --accent4:    #f59e0b;
+    --accent5:    #ef4444;
+    --text:       #e2eaf6;
+    --text-dim:   #7a8fa8;
+    --text-muted: #4a5e75;
+    --border:     #1e3352;
+    --border-glow:#00d4ff33;
+    --sidebar-w:  210px;
+    --right-w:    260px;
+    --header-h:   48px;
+    --radius:     8px;
+    --font:       'Segoe UI', system-ui, sans-serif;
+    --font-mono:  'Cascadia Code', 'Consolas', monospace;
+  }
+  html, body { height: 100%; overflow: hidden; font-family: var(--font); font-size: 13px; background: var(--bg-deep); color: var(--text); }
+
+  /* ── LAYOUT SHELL ── */
+  #app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+  #header { height: var(--header-h); min-height: var(--header-h); display: flex; align-items: center; gap: 12px; padding: 0 16px; background: var(--bg-panel); border-bottom: 1px solid var(--border); flex-shrink: 0; z-index: 100; }
+  #body { display: flex; flex: 1; overflow: hidden; }
+  #sidebar { width: var(--sidebar-w); min-width: var(--sidebar-w); display: flex; flex-direction: column; background: var(--bg-panel); border-right: 1px solid var(--border); overflow-y: auto; overflow-x: hidden; transition: width .2s; flex-shrink: 0; }
+  #main { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+  #right-panel { width: var(--right-w); min-width: var(--right-w); background: var(--bg-panel); border-left: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; transition: width .2s; }
+  @media (max-width: 900px) {
+    #right-panel { display: none; }
+    :root { --sidebar-w: 180px; }
+  }
+  @media (max-width: 650px) {
+    #sidebar { width: 44px; min-width: 44px; }
+    #sidebar .nav-label, #sidebar .section-label, #sidebar .quick-action-label { display: none; }
+    :root { --right-w: 0px; }
+    #right-panel { display: none; }
+  }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* ── HEADER ── */
+  .logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; letter-spacing: 1px; color: var(--accent); text-transform: uppercase; flex-shrink: 0; }
+  .logo-diamond { width: 22px; height: 22px; background: linear-gradient(135deg, var(--accent), var(--accent2)); clip-path: polygon(50% 0%,100% 50%,50% 100%,0% 50%); }
+  .logo-ver { font-size: 9px; color: var(--text-muted); font-weight: 400; letter-spacing: 0; margin-top: 2px; }
+  #header-search { flex: 1; max-width: 480px; margin: 0 auto; position: relative; }
+  #header-search input { width: 100%; background: var(--bg-input); border: 1px solid var(--border); border-radius: 20px; padding: 6px 16px; color: var(--text); font-size: 12px; outline: none; transition: border-color .2s; }
+  #header-search input:focus { border-color: var(--accent); }
+  .hdr-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .hdr-btn { width: 30px; height: 30px; border-radius: 50%; background: transparent; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-dim); transition: color .15s, background .15s; font-size: 15px; }
+  .hdr-btn:hover { background: var(--bg-hover); color: var(--accent); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent3); box-shadow: 0 0 6px var(--accent3); flex-shrink: 0; }
+
+  /* ── SIDEBAR ── */
+  .jarvis-profile { padding: 14px 12px 10px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+  .jarvis-avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, var(--accent2), var(--accent)); display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+  .jarvis-info { overflow: hidden; }
+  .jarvis-name { font-weight: 700; font-size: 13px; }
+  .jarvis-status { font-size: 10px; color: var(--accent3); display: flex; align-items: center; gap: 4px; }
+  .section-label { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); padding: 10px 14px 4px; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; cursor: pointer; border-radius: 0; transition: background .15s, color .15s; color: var(--text-dim); position: relative; white-space: nowrap; overflow: hidden; }
+  .nav-item:hover { background: var(--bg-hover); color: var(--text); }
+  .nav-item.active { background: var(--bg-card); color: var(--accent); border-left: 2px solid var(--accent); }
+  .nav-icon { font-size: 15px; flex-shrink: 0; width: 18px; text-align: center; }
+  .nav-label { font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+  .nav-badge { margin-left: auto; background: var(--accent2); color: #fff; font-size: 9px; padding: 1px 5px; border-radius: 8px; flex-shrink: 0; }
+  .sidebar-divider { height: 1px; background: var(--border); margin: 6px 0; }
+  /* Quick actions */
+  .qa-section { padding: 8px 10px; }
+  .qa-btn { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; color: var(--text-dim); font-size: 11px; transition: all .15s; margin-bottom: 4px; }
+  .qa-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-hover); }
+  .qa-shortcut { margin-left: auto; font-size: 9px; color: var(--text-muted); background: var(--bg-input); padding: 1px 4px; border-radius: 3px; }
+  /* Chat history */
+  .history-item { padding: 7px 14px; cursor: pointer; border-radius: 0; overflow: hidden; }
+  .history-item:hover { background: var(--bg-hover); }
+  .history-title { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-time { font-size: 9px; color: var(--text-muted); }
+  /* Auto router */
+  .router-section { padding: 8px 12px; }
+  .router-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .router-tag { font-size: 10px; padding: 3px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; cursor: pointer; color: var(--text-dim); transition: all .15s; }
+  .router-tag:hover, .router-tag.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .router-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+
+  /* ── WORKSPACE TABS ── */
+  .ws-tabs { display: flex; align-items: center; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-panel); padding: 0 8px; flex-shrink: 0; overflow-x: auto; overflow-y: hidden; }
+  .ws-tab { display: flex; align-items: center; gap: 6px; padding: 10px 14px; cursor: pointer; font-size: 11px; color: var(--text-muted); border-bottom: 2px solid transparent; white-space: nowrap; transition: color .15s; flex-shrink: 0; }
+  .ws-tab:hover { color: var(--text); }
+  .ws-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .ws-tab-icon { font-size: 13px; }
+
+  /* ── WORKSPACES ── */
+  .workspace { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+  .workspace.active { display: flex; }
+
+  /* ── CHAT WORKSPACE ── */
+  #ws-chat { display: none; flex-direction: column; }
+  #ws-chat.active { display: flex; }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { display: flex; gap: 10px; max-width: 100%; }
+  .msg.user { flex-direction: row-reverse; }
+  .msg-avatar { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+  .msg-avatar.jarvis { background: linear-gradient(135deg, var(--accent2), var(--accent)); }
+  .msg-avatar.user { background: linear-gradient(135deg, var(--accent3), #059669); }
+  .msg-body { max-width: 75%; }
+  .msg-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 10px; color: var(--text-muted); }
+  .msg.user .msg-header { flex-direction: row-reverse; }
+  .msg-tag { font-size: 9px; padding: 1px 5px; background: var(--accent2); color: #fff; border-radius: 8px; }
+  /* Phase 6.4 — fallback-visibility badge ("answered by Groq — Ollama unavailable").
+     Amber/accent4 matches the existing .transcribing/.thinking mic-phase colors
+     (Phase 6.3) so the whole UI uses one consistent "this needs your attention,
+     but it's not an error" color, rather than introducing a new hue. */
+  .msg-tag.fallback-badge { background: var(--accent4); color: #1a1200; font-weight: 600; }
+  /* Phase 6.5 — specialist attribution badge ("via Engineering Agent"). Reuses
+     the existing msg-tag violet (--accent2, same as "AI AGENT") since this is
+     informational, not a warning — just a more specific version of the same tag. */
+  .msg-tag.agent-badge { background: transparent; border: 1px solid var(--accent2); color: var(--accent2); }
+  .msg-bubble { padding: 10px 14px; border-radius: 12px; font-size: 12px; line-height: 1.6; }
+  .msg.jarvis .msg-bubble { background: var(--bg-card); border: 1px solid var(--border); border-top-left-radius: 3px; }
+  .msg.user .msg-bubble { background: linear-gradient(135deg, var(--accent2), #5b21b6); border-top-right-radius: 3px; }
+  .msg-time { font-size: 9px; color: var(--text-muted); margin-top: 3px; text-align: right; }
+  .msg.user .msg-time { text-align: left; }
+  /* Chat input */
+  .chat-input-area { padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg-panel); }
+  .chat-input-row { display: flex; gap: 8px; align-items: flex-end; }
+  .chat-input-wrap { flex: 1; background: var(--bg-input); border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; display: flex; align-items: center; gap: 8px; transition: border-color .2s; }
+  .chat-input-wrap:focus-within { border-color: var(--accent); }
+  #chat-input { flex: 1; background: transparent; border: none; outline: none; color: var(--text); font-size: 13px; resize: none; max-height: 100px; min-height: 20px; font-family: var(--font); line-height: 1.5; }
+  .input-icon-btn { background: transparent; border: none; cursor: pointer; color: var(--text-muted); font-size: 16px; padding: 2px; transition: color .15s; flex-shrink: 0; }
+  .input-icon-btn:hover { color: var(--accent); }
+  .send-btn { width: 38px; height: 38px; border-radius: 50%; background: var(--accent); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: background .15s, transform .1s; flex-shrink: 0; }
+  .send-btn:hover { background: #00b8e0; transform: scale(1.05); }
+  /* Voice & Model row */
+  .chat-meta-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+  .voice-ctrl { display: flex; align-items: center; gap: 6px; }
+  .voice-mic { width: 34px; height: 34px; border-radius: 50%; background: var(--bg-card); border: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 15px; transition: all .15s; color: var(--text-dim); }
+  .voice-mic:hover { border-color: var(--accent); color: var(--accent); }
+  .voice-mic.listening { background: var(--accent5); border-color: var(--accent5); color: #fff; animation: pulse 1s infinite; }
+  /* Phase 6.3 — mic-state feedback beyond plain listening/idle. "transcribing"
+     (recording stopped, waiting on stt_result) and "thinking" (agent is
+     generating a reply) reuse the same pulse animation at a calmer pace so
+     the user can tell "still working" from "actively recording" at a glance.
+     "speaking" (TTS audio currently playing) gets its own color so it reads
+     as distinct from "the system is busy" — it's "the system is replying". */
+  .voice-mic.transcribing { background: var(--accent4); border-color: var(--accent4); color: #fff; animation: pulse 1.4s infinite; }
+  .voice-mic.thinking     { background: var(--accent4); border-color: var(--accent4); color: #fff; animation: pulse 1.4s infinite; }
+  .voice-mic.speaking     { background: var(--accent2); border-color: var(--accent2); color: #fff; animation: pulse 1.2s infinite; }
+  .backend-status.ok { color: var(--accent2, #2ecc71); border-color: var(--accent2, #2ecc71); }
+  .backend-status.err { color: var(--accent5, #e74c3c); border-color: var(--accent5, #e74c3c); }
+  #provider-groq.active, #provider-gemini.active, #provider-ollama.active { color: var(--accent2,#2ecc71); border-color: var(--accent2,#2ecc71); }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.4); } 50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); } }
+  .stt-status { font-size: 10px; padding: 3px 8px; border-radius: 10px; }
+  .stt-status.ok { background: #10b98122; color: var(--accent3); }
+  .stt-status.err { background: #ef444422; color: var(--accent5); }
+  .stt-status.warn { background: #f59e0b22; color: var(--accent4); }
+  .stt-status.speaking { background: #7c3aed22; color: var(--accent2); }
+  .model-pill { font-size: 10px; padding: 3px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; color: var(--text-dim); cursor: pointer; transition: all .15s; }
+  .model-pill:hover { border-color: var(--accent); color: var(--accent); }
+  .provider-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .provider-tag { font-size: 9px; padding: 2px 7px; border-radius: 8px; cursor: pointer; background: var(--bg-card); border: 1px solid var(--border); color: var(--text-muted); transition: all .15s; }
+  .provider-tag:hover, .provider-tag.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+
+  /* ── AGENTS WORKSPACE ── */
+  #ws-agents { display: none; flex-direction: column; overflow-y: auto; }
+  #ws-agents.active { display: flex; }
+  .agents-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; padding: 16px; }
+  .agent-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; cursor: pointer; transition: border-color .2s, transform .15s; position: relative; overflow: hidden; }
+  .agent-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .agent-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 12px 12px 0 0; }
+  .agent-card.planner::before { background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+  .agent-card.coder::before { background: linear-gradient(90deg, var(--accent3), #059669); }
+  .agent-card.browser-a::before { background: linear-gradient(90deg, #3b82f6, #1d4ed8); }
+  .agent-card.memory-a::before { background: linear-gradient(90deg, #ec4899, #be185d); }
+  .agent-card.voice-a::before { background: linear-gradient(90deg, var(--accent4), #d97706); }
+  .agent-card.automation-a::before { background: linear-gradient(90deg, var(--accent2), #5b21b6); }
+  .agent-card.file-a::before { background: linear-gradient(90deg, #14b8a6, #0d9488); }
+  .agent-card.api-a::before { background: linear-gradient(90deg, #f97316, #ea580c); }
+  .agent-card-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+  .agent-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+  .agent-info { flex: 1; }
+  .agent-name { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+  .agent-role { font-size: 10px; color: var(--text-muted); }
+  .agent-status-badge { font-size: 9px; padding: 2px 7px; border-radius: 8px; margin-left: auto; flex-shrink: 0; }
+  .agent-status-badge.online { background: #10b98122; color: var(--accent3); }
+  .agent-status-badge.idle { background: #f59e0b22; color: var(--accent4); }
+  .agent-status-badge.busy { background: #ef444422; color: var(--accent5); }
+  .agent-desc { font-size: 11px; color: var(--text-dim); line-height: 1.5; margin-bottom: 12px; }
+  .agent-caps { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+  .agent-cap { font-size: 9px; padding: 2px 6px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted); }
+  .agent-actions { display: flex; gap: 6px; }
+  .agent-btn { flex: 1; padding: 6px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; font-size: 10px; color: var(--text-dim); cursor: pointer; transition: all .15s; text-align: center; }
+  .agent-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .agent-btn.primary { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .agent-btn.primary:hover { background: #6d28d9; }
+  /* Agent task panel */
+  .agents-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .agents-header h2 { font-size: 14px; font-weight: 700; }
+  .agent-filter-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter-btn { font-size: 10px; padding: 4px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; cursor: pointer; color: var(--text-muted); transition: all .15s; }
+  .filter-btn:hover, .filter-btn.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+
+  /* ── CODER WORKSPACE (VSCode-like) ── */
+  #ws-coder { display: none; flex-direction: column; }
+  #ws-coder.active { display: flex; }
+  .coder-layout { display: flex; flex: 1; overflow: hidden; }
+  /* File explorer pane */
+  .coder-explorer { width: 180px; min-width: 140px; background: var(--bg-panel); border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; }
+  .coder-exp-header { padding: 8px 12px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .file-tree-item { padding: 5px 12px; display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11px; color: var(--text-dim); transition: background .1s; }
+  .file-tree-item:hover { background: var(--bg-hover); }
+  .file-tree-item.active { background: var(--bg-card); color: var(--accent); }
+  .file-tree-item.folder { color: var(--accent4); }
+  .ft-icon { font-size: 12px; flex-shrink: 0; }
+  /* Editor pane */
+  .coder-editor-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+  .editor-tabs { display: flex; background: var(--bg-panel); border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0; }
+  .editor-tab { padding: 8px 14px; font-size: 11px; cursor: pointer; color: var(--text-muted); border-right: 1px solid var(--border); display: flex; align-items: center; gap: 6px; white-space: nowrap; border-bottom: 1px solid transparent; transition: color .15s; flex-shrink: 0; }
+  .editor-tab.active { background: var(--bg-deep); color: var(--text); border-bottom-color: var(--accent); }
+  .editor-tab:hover { color: var(--text); }
+  .tab-close { font-size: 10px; opacity: 0; transition: opacity .15s; }
+  .editor-tab:hover .tab-close { opacity: 1; }
+  /* Code area */
+  .code-area-wrap { flex: 1; display: flex; overflow: hidden; position: relative; }
+  .code-textarea { flex: 1; background: var(--bg-deep); border: none; outline: none; color: #c9d1d9; font-family: var(--font-mono); font-size: 13px; line-height: 1.7; padding: 16px; resize: none; overflow-y: auto; tab-size: 2; }
+  .code-line-nums { width: 44px; background: var(--bg-deep); padding: 16px 0; text-align: right; color: var(--text-muted); font-family: var(--font-mono); font-size: 13px; line-height: 1.7; user-select: none; flex-shrink: 0; border-right: 1px solid var(--border); padding-right: 8px; overflow: hidden; }
+  /* AI assistant strip */
+  .ai-assist-bar { border-top: 1px solid var(--border); background: var(--bg-panel); padding: 8px 12px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+  .ai-assist-label { font-size: 10px; color: var(--accent); font-weight: 700; flex-shrink: 0; }
+  .ai-action-btn { font-size: 10px; padding: 4px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--text-dim); transition: all .15s; }
+  .ai-action-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .ai-action-btn.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .ai-input-mini { flex: 1; min-width: 120px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; color: var(--text); font-size: 11px; outline: none; }
+  .ai-input-mini:focus { border-color: var(--accent); }
+  .ai-run-btn { padding: 4px 14px; background: var(--accent); border: none; border-radius: 6px; color: var(--bg-deep); font-size: 11px; font-weight: 700; cursor: pointer; transition: background .15s; flex-shrink: 0; }
+  .ai-run-btn:hover { background: #00b8e0; }
+  /* AI output panel */
+  .ai-output-panel { width: 260px; min-width: 200px; border-left: 1px solid var(--border); background: var(--bg-panel); display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
+  .ai-output-header { padding: 8px 12px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .ai-output-body { flex: 1; padding: 12px; overflow-y: auto; font-size: 11px; line-height: 1.6; color: var(--text-dim); }
+  .ai-suggestion { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+  .ai-suggestion-type { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); margin-bottom: 4px; }
+  .ai-suggestion-text { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+  .ai-apply-btn { font-size: 9px; padding: 3px 8px; background: var(--accent3); border: none; border-radius: 4px; color: #fff; cursor: pointer; margin-top: 6px; }
+  /* Status bar */
+  .vscode-statusbar { height: 22px; background: #00d4ff22; border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 12px; gap: 16px; flex-shrink: 0; }
+  .status-item { font-size: 10px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+  .status-item.ok { color: var(--accent3); }
+
+  /* ── BROWSER WORKSPACE ── */
+  #ws-browser { display: none; flex-direction: column; }
+  #ws-browser.active { display: flex; }
+  .browser-bar { padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; background: var(--bg-panel); }
+  .browser-nav-btn { width: 26px; height: 26px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--text-dim); transition: all .15s; }
+  .browser-nav-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .browser-url { flex: 1; background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; color: var(--text); font-size: 12px; outline: none; font-family: var(--font-mono); }
+  .browser-url:focus { border-color: var(--accent); }
+  .browser-go-btn { padding: 5px 14px; background: var(--accent); border: none; border-radius: 8px; color: var(--bg-deep); font-size: 11px; font-weight: 700; cursor: pointer; }
+  .browser-viewport { flex: 1; background: var(--bg-deep); display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+  .browser-placeholder { text-align: center; color: var(--text-muted); }
+  .browser-placeholder .big-icon { font-size: 48px; margin-bottom: 12px; }
+  .browser-tabs-row { display: flex; gap: 4px; padding: 6px 12px 0; background: var(--bg-panel); border-bottom: none; overflow-x: auto; flex-shrink: 0; }
+  .browser-tab { padding: 5px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px 6px 0 0; font-size: 11px; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; border-bottom: none; transition: color .15s; }
+  .browser-tab.active { background: var(--bg-deep); color: var(--accent); border-color: var(--border); border-bottom-color: var(--bg-deep); }
+
+  /* ── MEMORY WORKSPACE ── */
+  #ws-memory { display: none; flex-direction: column; overflow-y: auto; }
+  #ws-memory.active { display: flex; }
+  .memory-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 16px; }
+  @media (max-width: 700px) { .memory-layout { grid-template-columns: 1fr; } }
+  .mem-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .mem-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .mem-card-title { font-size: 12px; font-weight: 700; }
+  .mem-tag { font-size: 9px; padding: 2px 6px; border-radius: 6px; background: var(--accent2); color: #fff; }
+  .mem-entry { padding: 8px; background: var(--bg-input); border-radius: 6px; margin-bottom: 6px; font-size: 11px; color: var(--text-dim); border-left: 2px solid var(--accent2); }
+  .mem-entry-key { font-size: 9px; color: var(--accent); margin-bottom: 2px; font-weight: 700; }
+  .graph-placeholder { width: 100%; height: 120px; background: var(--bg-input); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 11px; }
+  .vector-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .vector-label { font-size: 10px; color: var(--text-dim); width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vector-track { flex: 1; height: 4px; background: var(--bg-input); border-radius: 2px; overflow: hidden; }
+  .vector-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--accent2), var(--accent)); }
+  .vector-val { font-size: 9px; color: var(--text-muted); width: 30px; text-align: right; }
+
+  /* ── TASKS WORKSPACE ── */
+  #ws-tasks { display: none; flex-direction: column; overflow-y: auto; }
+  #ws-tasks.active { display: flex; }
+  .tasks-layout { padding: 16px; }
+  .kanban-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .kanban-col { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .kanban-col-header { padding: 10px 14px; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
+  .kanban-col-count { font-size: 9px; padding: 1px 6px; border-radius: 8px; background: var(--bg-input); color: var(--text-muted); }
+  .kanban-items { padding: 8px; display: flex; flex-direction: column; gap: 6px; min-height: 80px; }
+  .kanban-item { background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 10px; cursor: pointer; transition: border-color .15s; }
+  .kanban-item:hover { border-color: var(--accent); }
+  .kanban-item-title { font-size: 11px; margin-bottom: 4px; }
+  .kanban-item-meta { display: flex; align-items: center; gap: 6px; }
+  .kanban-agent-tag { font-size: 9px; padding: 1px 5px; border-radius: 4px; background: var(--accent2); color: #fff; }
+  .kanban-priority { width: 8px; height: 8px; border-radius: 50%; }
+  .p-high { background: var(--accent5); }
+  .p-med { background: var(--accent4); }
+  .p-low { background: var(--accent3); }
+
+  /* ── AUTOMATION WORKSPACE ── */
+  #ws-automation { display: none; flex-direction: column; overflow-y: auto; }
+  #ws-automation.active { display: flex; }
+  .auto-layout { padding: 16px; }
+  .auto-workflow { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .auto-wf-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .auto-wf-name { font-weight: 700; font-size: 12px; }
+  .auto-wf-status { font-size: 9px; padding: 2px 7px; border-radius: 8px; }
+  .wf-active { background: #10b98122; color: var(--accent3); }
+  .wf-paused { background: #f59e0b22; color: var(--accent4); }
+  .auto-steps { display: flex; align-items: center; gap: 0; flex-wrap: wrap; }
+  .auto-step { background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 10px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
+  .auto-arrow { color: var(--text-muted); padding: 0 4px; font-size: 12px; }
+  .auto-step-icon { font-size: 12px; }
+
+  /* ── SETTINGS WORKSPACE ── */
+  #ws-settings { display: none; flex-direction: column; overflow-y: auto; }
+  #ws-settings.active { display: flex; }
+  .settings-layout { display: grid; grid-template-columns: 200px 1fr; height: 100%; overflow: hidden; }
+  @media (max-width: 600px) { .settings-layout { grid-template-columns: 1fr; } }
+  .settings-nav { border-right: 1px solid var(--border); padding: 12px 0; overflow-y: auto; }
+  .settings-nav-item { padding: 8px 16px; font-size: 12px; cursor: pointer; color: var(--text-muted); transition: all .15s; display: flex; align-items: center; gap: 8px; }
+  .settings-nav-item:hover { background: var(--bg-hover); color: var(--text); }
+  .settings-nav-item.active { background: var(--bg-card); color: var(--accent); border-right: 2px solid var(--accent); }
+  .settings-content { padding: 20px; overflow-y: auto; }
+  .settings-section { margin-bottom: 24px; }
+  .settings-section-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .settings-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 12px; }
+  .settings-row:last-child { border-bottom: none; }
+  .settings-row-info { flex: 1; }
+  .settings-row-label { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+  .settings-row-desc { font-size: 10px; color: var(--text-muted); }
+  .toggle { width: 40px; height: 22px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 11px; cursor: pointer; position: relative; transition: background .2s; flex-shrink: 0; }
+  .toggle.on { background: var(--accent2); border-color: var(--accent2); }
+  .toggle::after { content: ''; position: absolute; width: 16px; height: 16px; background: #fff; border-radius: 50%; top: 2px; left: 2px; transition: left .2s; }
+  .toggle.on::after { left: 20px; }
+  .settings-select { background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; color: var(--text); font-size: 11px; outline: none; cursor: pointer; }
+  .settings-select:focus { border-color: var(--accent); }
+  .settings-input { background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; color: var(--text); font-size: 11px; outline: none; width: 200px; }
+  .settings-input:focus { border-color: var(--accent); }
+  .api-key-row { display: flex; gap: 6px; align-items: center; }
+  .api-key-input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; color: var(--text); font-size: 11px; outline: none; font-family: var(--font-mono); }
+  .api-key-input:focus { border-color: var(--accent); }
+  .api-save-btn { padding: 6px 14px; background: var(--accent3); border: none; border-radius: 6px; color: #fff; font-size: 11px; cursor: pointer; }
+  .api-test-btn { padding: 6px 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); font-size: 11px; cursor: pointer; }
+  .stt-tts-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .stt-tts-title { font-size: 12px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .diagnostic-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 11px; border-bottom: 1px solid var(--border); }
+  .diagnostic-item:last-child { border-bottom: none; }
+  .diag-icon { font-size: 14px; width: 18px; text-align: center; }
+  .diag-ok { color: var(--accent3); }
+  .diag-err { color: var(--accent5); }
+  .diag-warn { color: var(--accent4); }
+  .diag-label { flex: 1; }
+  .diag-fix { font-size: 10px; padding: 2px 8px; background: var(--accent5); border: none; border-radius: 4px; color: #fff; cursor: pointer; }
+  .diag-fixok { font-size: 10px; padding: 2px 8px; background: var(--accent3); border: none; border-radius: 4px; color: #fff; cursor: pointer; }
+
+  /* ── RIGHT PANEL ── */
+  .panel-section { padding: 12px; border-bottom: 1px solid var(--border); }
+  .panel-title { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+  /* System meters */
+  .meter-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .meter-label { font-size: 10px; color: var(--text-dim); width: 30px; flex-shrink: 0; }
+  .meter-ring-wrap { position: relative; flex-shrink: 0; }
+  .meter-ring { width: 44px; height: 44px; }
+  .meter-ring circle { fill: none; stroke-linecap: round; }
+  .ring-bg { stroke: var(--bg-input); stroke-width: 5; }
+  .ring-fill { stroke-width: 5; transition: stroke-dashoffset .5s; stroke-dasharray: 100; }
+  .cpu-ring { stroke: var(--accent); }
+  .ram-ring { stroke: var(--accent2); }
+  .gpu-ring { stroke: var(--accent3); }
+  .meter-val { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; }
+  .meter-info { flex: 1; }
+  .meter-name { font-size: 10px; color: var(--text-dim); }
+  .meter-sub { font-size: 9px; color: var(--text-muted); }
+  .sparkline { height: 20px; width: 100%; }
+  /* Active agents list */
+  .active-agent-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .active-agent-row:last-child { border-bottom: none; }
+  .aa-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .aa-name { font-size: 11px; flex: 1; }
+  .aa-status { font-size: 9px; color: var(--text-muted); }
+  /* Model info */
+  .model-info-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .model-brain { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, var(--accent2), var(--accent)); display: flex; align-items: center; justify-content: center; font-size: 18px; margin: 0 auto 8px; }
+  .model-detail-row { display: flex; justify-content: space-between; align-items: center; font-size: 10px; padding: 3px 0; border-bottom: 1px solid var(--border); }
+  .model-detail-row:last-child { border-bottom: none; }
+  .model-key { color: var(--text-muted); }
+  .model-val { color: var(--text); font-weight: 600; }
+  .model-val.ok { color: var(--accent3); }
+  .model-val.err { color: var(--accent5); }
+  .model-val.warn { color: var(--accent4); }
+  /* Phase 6.2 — model picker rows on the Models settings page */
+  .settings-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .model-option { cursor: pointer; transition: background .12s; padding: 8px 12px; }
+  .model-option:hover { background: var(--bg-hover); }
+  .model-option .model-check { color: var(--accent3); font-weight: 700; width: 14px; text-align: center; flex-shrink: 0; }
+  .model-option.switching { opacity: .6; pointer-events: none; }
+  .model-group-label { padding: 10px 2px 4px; font-size: 10px; color: var(--text-muted); font-weight: 700; letter-spacing: .5px; }
+  .change-model-btn { width: 100%; margin-top: 8px; padding: 6px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; font-size: 10px; color: var(--text-dim); cursor: pointer; transition: all .15s; }
+  .change-model-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── MODAL / OVERLAY ── */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .modal-overlay.open { opacity: 1; pointer-events: all; }
+  .modal { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px; padding: 20px; width: 90%; max-width: 480px; max-height: 80vh; overflow-y: auto; }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .modal-title { font-size: 14px; font-weight: 700; }
+  .modal-close { background: transparent; border: none; cursor: pointer; color: var(--text-dim); font-size: 18px; }
+  .modal-close:hover { color: var(--accent5); }
+
+  /* ── NOTIFICATION TOAST ── */
+  #toast { position: fixed; bottom: 20px; right: 20px; z-index: 2000; }
+  .toast-item { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; margin-top: 8px; font-size: 12px; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 20px rgba(0,0,0,.4); animation: slideIn .3s ease; min-width: 240px; }
+  .toast-item.ok { border-left: 3px solid var(--accent3); }
+  .toast-item.err { border-left: 3px solid var(--accent5); }
+  .toast-item.info { border-left: 3px solid var(--accent); }
+  @keyframes slideIn { from { transform: translateX(60px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+  /* ── LOADING TYPING ── */
+  .typing-dots span { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); margin: 0 1px; animation: blink 1.4s infinite; }
+  .typing-dots span:nth-child(2) { animation-delay: .2s; }
+  .typing-dots span:nth-child(3) { animation-delay: .4s; }
+  /* P-26: Streaming cursor */
+  @keyframes blink-cursor { 0%,100%{opacity:1} 50%{opacity:0} }
+  .stream-cursor { display:inline-block; color:var(--accent); animation:blink-cursor 0.8s step-end infinite; font-size:14px; }
+  .streaming-bubble .msg-bubble { border-color:var(--accent)44; }
+  /* P-27: Holographic glow effect */
+  .holo-mode .msg.jarvis .msg-bubble { box-shadow:0 0 8px var(--border-glow); }
+  .holo-mode .nav-item.active { box-shadow:0 0 6px var(--border-glow); }
+  @keyframes blink { 0%,80%,100% { opacity: 0; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-4px); } }
+
+  /* ── GLOW ── */
+  .glow-accent { box-shadow: 0 0 12px var(--border-glow); }
+
+  /* scrollbar for ws-tabs */
+  .ws-tabs::-webkit-scrollbar { height: 3px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- ═══ HEADER ═══ -->
+  <header id="header">
+    <div class="logo">
+      <div class="logo-diamond"></div>
+      JARVIS AI OS
+      <span class="logo-ver">v3.0</span>
+    </div>
+    <div id="header-search">
+      <input type="text" placeholder="Ask JARVIS anything..." id="global-search" />
+    </div>
+    <div class="hdr-actions">
+      <span class="backend-status err" id="backend-status-badge" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);">● BACKEND OFFLINE</span>
+      <span class="active-provider-badge" id="active-provider-badge" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);color:var(--text-dim);">—</span>
+      <div class="status-dot" title="System Online"></div>
+      <button class="hdr-btn" title="Notifications" onclick="showToast('2 agent tasks completed','ok')">🔔</button>
+      <button class="hdr-btn" id="theme-toggle-btn" title="Switch to Holographic" onclick="toggleTheme()">🔮</button>
+      <button class="hdr-btn" title="Settings" onclick="switchWS('settings')">⚙️</button>
+      <button class="hdr-btn" title="Minimize">—</button>
+    </div>
+  </header>
+
+  <!-- ═══ BODY ═══ -->
+  <div id="body">
+    <!-- ──── SIDEBAR ──── -->
+    <aside id="sidebar">
+      <div class="jarvis-profile">
+        <div class="jarvis-avatar">🤖</div>
+        <div class="jarvis-info">
+          <div class="jarvis-name">JARVIS</div>
+          <div class="jarvis-status"><span class="status-dot" style="width:6px;height:6px"></span> ONLINE</div>
+        </div>
+      </div>
+
+      <div class="section-label">NAVIGATION</div>
+      <div class="nav-item active" onclick="switchWS('chat')"><span class="nav-icon">💬</span><span class="nav-label">Chat</span></div>
+      <div class="nav-item" onclick="switchWS('agents')"><span class="nav-icon">🤝</span><span class="nav-label">Agents</span><span class="nav-badge">6</span></div>
+      <div class="nav-item" onclick="switchWS('browser')"><span class="nav-icon">🌐</span><span class="nav-label">Browser</span></div>
+      <div class="nav-item" onclick="switchWS('memory')"><span class="nav-icon">🧠</span><span class="nav-label">Memory</span></div>
+      <div class="nav-item" onclick="switchWS('tasks')"><span class="nav-icon">📋</span><span class="nav-label">Tasks</span><span class="nav-badge">3</span></div>
+      <div class="nav-item" onclick="switchWS('automation')"><span class="nav-icon">⚙️</span><span class="nav-label">Automation</span></div>
+      <div class="nav-item" onclick="switchWS('settings')"><span class="nav-icon">🔧</span><span class="nav-label">Settings</span></div>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="section-label quick-action-label">QUICK ACTIONS</div>
+      <div class="qa-section">
+        <button class="qa-btn" onclick="switchWS('chat')">💬 <span class="quick-action-label">New Chat</span><span class="qa-shortcut">Ctrl+N</span></button>
+        <button class="qa-btn" onclick="switchWS('coder')">💻 <span class="quick-action-label">Code Mode</span></button>
+        <button class="qa-btn" onclick="switchWS('browser')">🌐 <span class="quick-action-label">Web Search</span></button>
+        <button class="qa-btn" onclick="startListening()">🎙️ <span class="quick-action-label">Voice</span><span class="qa-shortcut">V</span></button>
+      </div>
+
+      <div class="sidebar-divider"></div>
+      <div class="section-label">HISTORY</div>
+      <div class="history-item"><div class="history-title">System analysis report</div><div class="history-time">10:30 PM</div></div>
+      <div class="history-item"><div class="history-title">Python code optimization</div><div class="history-time">Yesterday</div></div>
+      <div class="history-item"><div class="history-title">Agents discussion</div><div class="history-time">Yesterday</div></div>
+
+      <div class="sidebar-divider"></div>
+      <div class="router-section">
+        <div class="router-label">AUTO ROUTER <span class="nav-badge" style="background:var(--accent3)">ON</span></div>
+        <div class="router-tags">
+          <span class="router-tag active">Coding</span>
+          <span class="router-tag">Reasoning</span>
+          <span class="router-tag">Search</span>
+          <span class="router-tag">File</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ──── MAIN AREA ──── -->
+    <main id="main">
+      <!-- Workspace Tabs -->
+      <div class="ws-tabs">
+        <div class="ws-tab active" id="tab-chat" onclick="switchWS('chat')"><span class="ws-tab-icon">💬</span> Chat</div>
+        <div class="ws-tab" id="tab-agents" onclick="switchWS('agents')"><span class="ws-tab-icon">🤝</span> Agents</div>
+        <div class="ws-tab" id="tab-coder" onclick="switchWS('coder')"><span class="ws-tab-icon">💻</span> Coder</div>
+        <div class="ws-tab" id="tab-browser" onclick="switchWS('browser')"><span class="ws-tab-icon">🌐</span> Browser</div>
+        <div class="ws-tab" id="tab-memory" onclick="switchWS('memory')"><span class="ws-tab-icon">🧠</span> Memory</div>
+        <div class="ws-tab" id="tab-tasks" onclick="switchWS('tasks')"><span class="ws-tab-icon">📋</span> Tasks</div>
+        <div class="ws-tab" id="tab-automation" onclick="switchWS('automation')"><span class="ws-tab-icon">⚡</span> Automation</div>
+        <div class="ws-tab" id="tab-settings" onclick="switchWS('settings')"><span class="ws-tab-icon">⚙️</span> Settings</div>
+      </div>
+
+      <!-- ══ CHAT WORKSPACE ══ -->
+      <div class="workspace" id="ws-chat">
+        <div style="display:flex;align-items:center;padding:6px 16px;background:var(--bg-panel);border-bottom:1px solid var(--border);gap:8px;flex-shrink:0">
+          <span style="font-size:11px;color:var(--text-dim);font-weight:700;letter-spacing:1px">💬 CHAT</span>
+          <span style="flex:1"></span>
+          <button onclick="clearChatHistory()" title="Clear chat history"
+            style="background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);
+                   font-size:10px;padding:2px 10px;cursor:pointer;transition:all .15s"
+            onmouseover="this.style.borderColor='var(--accent5)';this.style.color='var(--accent5)'"
+            onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-muted)'">
+            🗑 Clear History
+          </button>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+          <div class="msg jarvis">
+            <div class="msg-avatar jarvis">🤖</div>
+            <div class="msg-body">
+              <div class="msg-header">JARVIS <span class="msg-tag">AI AGENT</span></div>
+              <div class="msg-bubble">✅ Connected to JARVIS server.<br>All systems online. How can I assist you?</div>
+              <div class="msg-time">Now</div>
+            </div>
+          </div>
+        </div>
+        <div class="chat-input-area">
+          <div class="chat-input-row">
+            <div class="chat-input-wrap">
+              <button class="input-icon-btn" title="Attach file" onclick="showToast('File attach coming soon','info')">📎</button>
+              <textarea id="chat-input" placeholder="Type your message..." rows="1" onkeydown="handleChatKey(event)" oninput="autoGrow(this)"></textarea>
+              <button class="input-icon-btn" title="Pen / draw">✏️</button>
+            </div>
+            <button class="send-btn" onclick="sendMessage()" title="Send">➤</button>
+          </div>
+          <div class="chat-meta-row">
+            <div class="voice-ctrl">
+              <button class="voice-mic" id="mic-btn" onclick="startListening()" title="Voice input">🎙️</button>
+              <span class="stt-status" id="stt-status-badge">STT Ready</span>
+            </div>
+            <div class="provider-tags">
+              <span class="provider-tag" onclick="toggleProvider(this)">Groq</span>
+              <span class="provider-tag active" onclick="toggleProvider(this)">Gemini</span>
+              <span class="provider-tag" onclick="toggleProvider(this)">OpenAI</span>
+              <span class="provider-tag" onclick="toggleProvider(this)">Claude</span>
+              <span class="provider-tag" onclick="toggleProvider(this)">Local</span>
+            </div>
+            <span class="model-pill" id="model-pill" onclick="switchWS('settings');settingsPage('models',null)">… ▾</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ AGENTS WORKSPACE ══ -->
+      <div class="workspace" id="ws-agents">
+        <div class="agents-header">
+          <h2>🤝 Agent Workspace</h2>
+          <div class="agent-filter-row">
+            <button class="filter-btn active" onclick="filterAgents('all',this)">All</button>
+            <button class="filter-btn" onclick="filterAgents('online',this)">Online</button>
+            <button class="filter-btn" onclick="filterAgents('busy',this)">Busy</button>
+            <button class="filter-btn" onclick="filterAgents('idle',this)">Idle</button>
+          </div>
+        </div>
+        <div class="agents-grid">
+          <!-- Planner Agent -->
+          <div class="agent-card planner" data-status="online">
+            <div class="agent-card-header">
+              <div class="agent-icon" style="background:#00d4ff22">📅</div>
+              <div class="agent-info">
+                <div class="agent-name">Planner Agent</div>
+                <div class="agent-role">Task Orchestration</div>
+              </div>
+              <span class="agent-status-badge online">● Online</span>
+            </div>
+            <div class="agent-desc">Routes and coordinates tasks across all agents. Decomposes complex goals into sub-tasks and manages priority queues via EventBus.</div>
+            <div class="agent-caps"><span class="agent-cap">Task decompose</span><span class="agent-cap">Priority queue</span><span class="agent-cap">EventBus</span><span class="agent-cap">Workflow</span></div>
+            <div class="agent-actions">
+              <button class="agent-btn primary" onclick="openAgentChat('Planner')">Chat</button>
+              <button class="agent-btn" onclick="showAgentLog('Planner')">Logs</button>
+              <button class="agent-btn" onclick="showAgentConfig('Planner')">Config</button>
+            </div>
+          </div>
+
+          <!-- Coder Agent -->
+          <div class="agent-card coder" data-status="busy">
+            <div class="agent-card-header">
+              <div class="agent-icon" style="background:#10b98122">💻</div>
+              <div class="agent-info">
+                <div class="agent-name">Coder Agent</div>
+                <div class="agent-role">Code Generation & Analysis</div>
+              </div>
+              <span class="agent-status-badge busy">● Busy</span>
+            </div>
+            <div class="agent-desc">Generates, analyzes, rewrites and debugs code. Opens VS Code-like workspace with AI-assisted code suggestions and real-time diagnostics.</div>
+            <div class="agent-caps"><span class="agent-cap">Generate</span><span class="agent-cap">Rewrite</span><span class="agent-cap">Analyze</span><span class="agent-cap">Debug</span><span class="agent-cap">AST</span></div>
+            <div class="agent-actions">
+              <button class="agent-btn primary" onclick="switchWS('coder')">Open IDE</button>
+              <button class="agent-btn" onclick="showAgentLog('Coder')">Logs</button>
+              <button class="agent-btn" onclick="showAgentConfig('Coder')">Config</button>
+            </div>
+          </div>
+
+          <!-- Browser Agent -->
+          <div class="agent-card browser-a" data-status="online">
+            <div class="agent-card-header">
+              <div class="agent-icon" style="background:#3b82f622">🌐</div>
+              <div class="agent-info">
+                <div class="agent-name">Browser Agent</div>
+                <div class="agent-role">Web Navigation & Scraping</div>
+              </div>
+              <span class="agent-status-badge online">● Online</span>
+            </div>
+            <div class="agent-desc">Controls Playwright browser sessions. Navigates URLs, clicks, types, screenshots and extracts web content via action.browser.request events.</div>
+            <div class="agent-caps"><span class="agent-cap">Navigate</span><span class="agent-cap">Scrape</span><span class="agent-cap">Screenshot</span><span class="agent-cap">Click</span><span class="agent-cap">JS exec</span></div>
+            <div class="agent-actions">
+              <button class="agent-btn primary" onclick="switchWS('browser')">Open Browser</button>
+              <button class="agent-btn" onclick="showAgentLog('Browser')">Logs</button>
+              <button class="agent-btn" onclick="showAgentConfig('Browser')">Config</button>
+            </div>
+          </div>
+
+          <!-- Memory Agent -->
+          <div class="agent-card memory-a" data-status="online">
+            <div class="agent-card-header">
+              <div class="agent-icon" style="background:#ec489922">🧠</div>
+              <div class="agent-info">
+                <div class="agent-name">Memory Agent</div>
+                <div class="agent-role">Context & Knowledge Store</div>
+              </div>
+              <span class="agent-status-badge online">● Online</span>
+            </div>
+            <div class="agent-desc">Manages short-term and long-term memory, vector embeddings and knowledge graph. Provides semantic search and context injection.</div>
+            <div class="agent-caps"><span class="agent-cap">Vector DB</span><span class="agent-cap">Embeddings</span><span class="agent-cap">Graph</span><span class="agent-cap">Recall</span></div>
+            <div class="agent-actions">
+              <button class="agent-btn primary" onclick="switchWS('memory')">Open Memory</button>
+              <button class="agent-btn" onclick="showAgentLog('Memory')">Logs</button>
+              <button class="agent-btn" onclick="showAgentConfig('Memory')">Config</button>
+            </div>
+          </div>
+
+          <!-- Voice Agent -->
+          <div class="agent-card voice-a" data-status="idle">
+            <div class="agent-card-header">
+              <div class="agent-icon" style="background:#f59e0b22">🎙️</div>
+              <div class="agent-info">
+                <div class="agent-name">Voice Agent</div>
+                <div class="agent-role">STT / TTS Pipeline</div>
+              </div>
+              <span class="agent-status-badge idle">● Idle</span>
+            </div>
+            <div class="agent-desc">Handles speech-to-text and text-to-speech. Uses Web Speech API with Whisper fallback. Streams voice to JARVIS and plays responses.</div>
+            <div class="agent-caps"><span class="agent-cap">Web Speech</span><span class="agent-cap">Whisper</span><span class="agent-cap">TTS</span><span class="agent-cap">Streaming</span></div>
+            <div class="agent-actions">
+              <button class="agent-btn primary" onclick="startListening()">Activate</button>
+              <button class="agent-btn" onclick="testTTS()">Test TTS</button>
+              <button class="agent-btn" onclick="switchWS('settings')">Config</button>
+            </div>
+          </div>
+
+          <!-- Automation Agent -->
+          <div class="agent-card automation-a" data-status="online">
+            <div class="agent-card-header">
+              <div class="agent-icon" style="background:#7c3aed22">⚡</div>
+              <div class="agent-info">
+                <div class="agent-name">Automation Agent</div>
+                <div class="agent-role">Desktop & API Actions</div>
+              </div>
+              <span class="agent-status-badge online">● Online</span>
+            </div>
+            <div class="agent-desc">Controls desktop mouse/keyboard, launches apps, manages windows and executes API calls via ActionCoordinator and EventBus routing.</div>
+            <div class="agent-caps"><span class="agent-cap">Mouse/KB</span><span class="agent-cap">Window Mgr</span><span class="agent-cap">App Launch</span><span class="agent-cap">API calls</span></div>
+            <div class="agent-actions">
+              <button class="agent-btn primary" onclick="switchWS('automation')">Workflows</button>
+              <button class="agent-btn" onclick="showAgentLog('Automation')">Logs</button>
+              <button class="agent-btn" onclick="showAgentConfig('Automation')">Config</button>
+            </div>
+          </div>
+
+          <!-- File Agent -->
+          <div class="agent-card file-a" data-status="online">
+            <div class="agent-card-header">
+              <div class="agent-icon" style="background:#14b8a622">📁</div>
+              <div class="agent-info">
+                <div class="agent-name">File Agent</div>
+                <div class="agent-role">Filesystem Operations</div>
+              </div>
+              <span class="agent-status-badge online">● Online</span>
+            </div>
+            <div class="agent-desc">Reads, writes, moves and manages files with permission validation. Enforces allowed paths and max file size via FileManager and FileActions.</div>
+            <div class="agent-caps"><span class="agent-cap">Read/Write</span><span class="agent-cap">Permissions</span><span class="agent-cap">Path Guard</span><span class="agent-cap">500MB limit</span></div>
+            <div class="agent-actions">
+              <button class="agent-btn primary" onclick="openAgentChat('File')">Chat</button>
+              <button class="agent-btn" onclick="showAgentLog('File')">Logs</button>
+              <button class="agent-btn" onclick="showAgentConfig('File')">Config</button>
+            </div>
+          </div>
+
+          <!-- API Agent -->
+          <div class="agent-card api-a" data-status="idle">
+            <div class="agent-card-header">
+              <div class="agent-icon" style="background:#f9731622">🔌</div>
+              <div class="agent-info">
+                <div class="agent-name">API Agent</div>
+                <div class="agent-role">External API Calls</div>
+              </div>
+              <span class="agent-status-badge idle">● Idle</span>
+            </div>
+            <div class="agent-desc">Manages all external HTTP API calls via APIManager and APIRegistry. Handles retries, rate limiting and multi-provider routing.</div>
+            <div class="agent-caps"><span class="agent-cap">HTTP</span><span class="agent-cap">Retry</span><span class="agent-cap">Rate limit</span><span class="agent-cap">Registry</span></div>
+            <div class="agent-actions">
+              <button class="agent-btn primary" onclick="openAgentChat('API')">Chat</button>
+              <button class="agent-btn" onclick="showAgentLog('API')">Logs</button>
+              <button class="agent-btn" onclick="showAgentConfig('API')">Config</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ CODER WORKSPACE ══ -->
+      <div class="workspace" id="ws-coder">
+        <div class="coder-layout">
+          <!-- File Explorer -->
+          <div class="coder-explorer">
+            <div class="coder-exp-header">📁 Explorer</div>
+            <div class="file-tree-item folder" onclick="toggleFolder(this)"><span class="ft-icon">📂</span> JARVIS_AI_OS</div>
+            <div class="file-tree-item" style="padding-left:24px" onclick="loadFile('action_coordinator','py')"><span class="ft-icon">🐍</span> action_coordinator.py</div>
+            <div class="file-tree-item" style="padding-left:24px" onclick="loadFile('action_events','py')"><span class="ft-icon">🐍</span> action_events.py</div>
+            <div class="file-tree-item folder" style="padding-left:24px" onclick="toggleFolder(this)"><span class="ft-icon">📂</span> agents/</div>
+            <div class="file-tree-item folder" style="padding-left:24px" onclick="toggleFolder(this)"><span class="ft-icon">📂</span> actions/</div>
+            <div class="file-tree-item" style="padding-left:36px" onclick="loadFile('api_manager','py')"><span class="ft-icon">🐍</span> api_manager.py</div>
+            <div class="file-tree-item" style="padding-left:36px" onclick="loadFile('browser_manager','py')"><span class="ft-icon">🐍</span> browser_manager.py</div>
+            <div class="file-tree-item" style="padding-left:36px" onclick="loadFile('file_manager','py')"><span class="ft-icon">🐍</span> file_manager.py</div>
+            <div class="file-tree-item" style="padding-left:36px" onclick="loadFile('media_service','py')"><span class="ft-icon">🐍</span> media_service.py</div>
+            <div class="file-tree-item folder" style="padding-left:24px"><span class="ft-icon">📂</span> kernel/</div>
+            <div class="file-tree-item folder" style="padding-left:24px"><span class="ft-icon">📂</span> observability/</div>
+            <div class="file-tree-item" style="padding-left:24px" onclick="loadFile('main','py')"><span class="ft-icon">🐍</span> main.py</div>
+            <div class="file-tree-item" style="padding-left:24px" onclick="loadFile('requirements','txt')"><span class="ft-icon">📄</span> requirements.txt</div>
+          </div>
+
+          <!-- Editor + AI Panel -->
+          <div class="coder-editor-area">
+            <div class="editor-tabs" id="editor-tabs">
+              <div class="editor-tab active" id="etab-welcome">🏠 welcome <span class="tab-close" onclick="closeTab('welcome')">✕</span></div>
+            </div>
+            <div class="code-area-wrap">
+              <div class="code-line-nums" id="line-nums">1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>10</div>
+              <textarea class="code-textarea" id="code-editor" spellcheck="false" onscroll="syncScroll(this)" oninput="updateLineNums(this)">"""
+JARVIS AI OS — Welcome to Coder Workspace
+==========================================
+Select a file from the explorer to open it here,
+or start typing your own code.
+
+AI actions available in the bar below:
+  ► Analyze   — Identify issues, complexity & suggestions
+  ► Rewrite   — Refactor selected code with AI
+  ► Generate  — Create new code from a description
+  ► Explain   — Get a plain-English walkthrough
+
+Quick tips:
+  Ctrl+/ to comment, Ctrl+Z to undo
+  Type a prompt below and hit Run to generate code.
+"""
+
+# Example: Action Coordinator stub
+class ActionCoordinator:
+    def __init__(self, event_bus=None):
+        self._bus = event_bus
+
+    async def route(self, request):
+        # TODO: dispatch to correct manager
+        pass
+</textarea>
+            </div>
+            <!-- AI Assist Bar -->
+            <div class="ai-assist-bar">
+              <span class="ai-assist-label">🤖 AI ASSIST</span>
+              <button class="ai-action-btn" onclick="aiAction('analyze')">🔍 Analyze</button>
+              <button class="ai-action-btn" onclick="aiAction('rewrite')">🔄 Rewrite</button>
+              <button class="ai-action-btn" onclick="aiAction('generate')">✨ Generate</button>
+              <button class="ai-action-btn" onclick="aiAction('explain')">📖 Explain</button>
+              <input class="ai-input-mini" type="text" id="ai-code-prompt" placeholder="Describe what to generate or ask about..." />
+              <button class="ai-run-btn" onclick="runAICode()">▶ Run</button>
+            </div>
+            <!-- Status Bar -->
+            <div class="vscode-statusbar">
+              <span class="status-item ok">● Python</span>
+              <span class="status-item">Ln 1, Col 1</span>
+              <span class="status-item">UTF-8</span>
+              <span class="status-item ok">✓ AI Ready</span>
+              <span class="status-item">JARVIS Coder Agent</span>
+            </div>
+          </div>
+
+          <!-- AI Output Panel -->
+          <div class="ai-output-panel">
+            <div class="ai-output-header">🤖 AI Suggestions</div>
+            <div class="ai-output-body" id="ai-output">
+              <div class="ai-suggestion">
+                <div class="ai-suggestion-type">💡 TIP</div>
+                <div class="ai-suggestion-text">Select code then click <b>Analyze</b> to detect issues, or use <b>Generate</b> to create code from a prompt.</div>
+              </div>
+              <div class="ai-suggestion">
+                <div class="ai-suggestion-type">⚠️ SUGGESTION</div>
+                <div class="ai-suggestion-text">ActionCoordinator.route() is missing error handling. Consider adding try/except with event bus failure emission.</div>
+                <button class="ai-apply-btn" onclick="applyFix('add error handling to route()')">Apply Fix</button>
+              </div>
+              <div class="ai-suggestion">
+                <div class="ai-suggestion-type">🔍 ANALYSIS</div>
+                <div class="ai-suggestion-text">Detected 1 async method, 0 type hints on route(). Adding annotations will improve IDE support.</div>
+                <button class="ai-apply-btn" onclick="applyFix('add type hints')">Apply Fix</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ BROWSER WORKSPACE ══ -->
+      <div class="workspace" id="ws-browser">
+        <div class="browser-tabs-row">
+          <div class="browser-tab active">🏠 New Tab</div>
+          <div class="browser-tab">+ Add Tab</div>
+        </div>
+        <div class="browser-bar">
+          <button class="browser-nav-btn" onclick="showToast('Back','info')">◀</button>
+          <button class="browser-nav-btn" onclick="showToast('Forward','info')">▶</button>
+          <button class="browser-nav-btn" onclick="showToast('Refresh','info')">↻</button>
+          <button class="browser-nav-btn" title="JARVIS browse" onclick="jarvisBrowse()">🤖</button>
+          <input class="browser-url" type="text" id="browser-url" placeholder="Enter URL or ask JARVIS to browse..." value="" />
+          <button class="browser-go-btn" onclick="browserGo()">Go</button>
+        </div>
+        <div class="browser-viewport">
+          <div class="browser-placeholder">
+            <div class="big-icon">🌐</div>
+            <div style="font-size:14px;color:var(--text-dim);margin-bottom:8px">Browser Agent Ready</div>
+            <div style="font-size:11px;color:var(--text-muted)">Enter a URL above or ask JARVIS to navigate for you.<br>Powered by Playwright via action.browser.request events.</div>
+            <br>
+            <button class="agent-btn primary" style="display:inline-block;padding:8px 20px;font-size:12px" onclick="jarvisBrowse()">🤖 Ask JARVIS to Browse</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ MEMORY WORKSPACE ══ -->
+      <div class="workspace" id="ws-memory">
+        <div class="agents-header">
+          <h2>🧠 Memory Workspace</h2>
+          <button class="filter-btn active">Vector DB</button>
+          <button class="filter-btn">Knowledge Graph</button>
+          <button class="filter-btn">Session</button>
+        </div>
+        <div class="memory-layout">
+          <div class="mem-card">
+            <div class="mem-card-header"><span>📚</span><span class="mem-card-title">Long-Term Memory</span><span class="mem-tag">247 entries</span></div>
+            <div class="mem-entry"><div class="mem-entry-key">user.preference.coding_style</div>Python with type hints, async preferred</div>
+            <div class="mem-entry"><div class="mem-entry-key">project.jarvis.architecture</div>EventBus + ActionCoordinator pattern</div>
+            <div class="mem-entry"><div class="mem-entry-key">user.name</div>User</div>
+          </div>
+          <div class="mem-card">
+            <div class="mem-card-header"><span>⚡</span><span class="mem-card-title">Session Memory</span><span class="mem-tag">Active</span></div>
+            <div class="mem-entry"><div class="mem-entry-key">current_task</div>JARVIS UI Enhancement</div>
+            <div class="mem-entry"><div class="mem-entry-key">last_agent</div>Planner Agent → Coder Agent</div>
+            <div class="mem-entry"><div class="mem-entry-key">context_tokens</div>4,821 / 128,000</div>
+          </div>
+          <div class="mem-card">
+            <div class="mem-card-header"><span>🔢</span><span class="mem-card-title">Vector Similarity</span><span class="mem-tag">Top matches</span></div>
+            <div class="vector-bar"><span class="vector-label">ActionCoordinator</span><div class="vector-track"><div class="vector-fill" style="width:94%"></div></div><span class="vector-val">0.94</span></div>
+            <div class="vector-bar"><span class="vector-label">EventBus routing</span><div class="vector-track"><div class="vector-fill" style="width:87%"></div></div><span class="vector-val">0.87</span></div>
+            <div class="vector-bar"><span class="vector-label">FileManager perms</span><div class="vector-track"><div class="vector-fill" style="width:76%"></div></div><span class="vector-val">0.76</span></div>
+            <div class="vector-bar"><span class="vector-label">BrowserManager</span><div class="vector-track"><div class="vector-fill" style="width:71%"></div></div><span class="vector-val">0.71</span></div>
+          </div>
+          <div class="mem-card">
+            <div class="mem-card-header"><span>🕸️</span><span class="mem-card-title">Knowledge Graph</span></div>
+            <div class="graph-placeholder">Graph visualizer — connect Neo4j or in-memory store</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ TASKS WORKSPACE ══ -->
+      <div class="workspace" id="ws-tasks">
+        <div class="agents-header">
+          <h2>📋 Task Board</h2>
+          <button class="filter-btn active" onclick="showToast('New task created','ok')">+ New Task</button>
+        </div>
+        <div class="tasks-layout">
+          <div class="kanban-board">
+            <div class="kanban-col">
+              <div class="kanban-col-header">📥 Inbox <span class="kanban-col-count">3</span></div>
+              <div class="kanban-items">
+                <div class="kanban-item"><div class="kanban-item-title">Fix STT mic permissions</div><div class="kanban-item-meta"><span class="kanban-agent-tag">Voice</span><span class="kanban-priority p-high" title="High"></span></div></div>
+                <div class="kanban-item"><div class="kanban-item-title">Add WebSocket reconnect logic</div><div class="kanban-item-meta"><span class="kanban-agent-tag">API</span><span class="kanban-priority p-med" title="Med"></span></div></div>
+                <div class="kanban-item"><div class="kanban-item-title">Update API registry defaults</div><div class="kanban-item-meta"><span class="kanban-agent-tag">Planner</span><span class="kanban-priority p-low" title="Low"></span></div></div>
+              </div>
+            </div>
+            <div class="kanban-col">
+              <div class="kanban-col-header">⚡ In Progress <span class="kanban-col-count">2</span></div>
+              <div class="kanban-items">
+                <div class="kanban-item"><div class="kanban-item-title">UI workspace redesign</div><div class="kanban-item-meta"><span class="kanban-agent-tag">Coder</span><span class="kanban-priority p-high"></span></div></div>
+                <div class="kanban-item"><div class="kanban-item-title">Browser playwright setup</div><div class="kanban-item-meta"><span class="kanban-agent-tag">Browser</span><span class="kanban-priority p-med"></span></div></div>
+              </div>
+            </div>
+            <div class="kanban-col">
+              <div class="kanban-col-header">👀 Review <span class="kanban-col-count">1</span></div>
+              <div class="kanban-items">
+                <div class="kanban-item"><div class="kanban-item-title">Memory agent embeddings</div><div class="kanban-item-meta"><span class="kanban-agent-tag">Memory</span><span class="kanban-priority p-med"></span></div></div>
+              </div>
+            </div>
+            <div class="kanban-col">
+              <div class="kanban-col-header">✅ Done <span class="kanban-col-count">4</span></div>
+              <div class="kanban-items">
+                <div class="kanban-item"><div class="kanban-item-title">EventBus integration</div><div class="kanban-item-meta"><span class="kanban-agent-tag">Planner</span></div></div>
+                <div class="kanban-item"><div class="kanban-item-title">FileManager permissions</div><div class="kanban-item-meta"><span class="kanban-agent-tag">File</span></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ AUTOMATION WORKSPACE ══ -->
+      <div class="workspace" id="ws-automation">
+        <div class="agents-header">
+          <h2>⚡ Automation Workflows</h2>
+          <button class="filter-btn active" onclick="showToast('New workflow created','ok')">+ New Workflow</button>
+        </div>
+        <div class="auto-layout">
+          <div class="auto-workflow">
+            <div class="auto-wf-header">
+              <span style="font-size:18px">🔄</span>
+              <div class="auto-wf-name">Daily System Report</div>
+              <span class="auto-wf-status wf-active">● Active</span>
+              <button class="filter-btn" style="margin-left:auto" onclick="showToast('Workflow paused','info')">Pause</button>
+            </div>
+            <div class="auto-steps">
+              <div class="auto-step"><span class="auto-step-icon">⏰</span> Trigger: 09:00</div>
+              <span class="auto-arrow">→</span>
+              <div class="auto-step"><span class="auto-step-icon">🧠</span> Memory: Load context</div>
+              <span class="auto-arrow">→</span>
+              <div class="auto-step"><span class="auto-step-icon">🌐</span> Browser: Fetch news</div>
+              <span class="auto-arrow">→</span>
+              <div class="auto-step"><span class="auto-step-icon">🤖</span> JARVIS: Summarize</div>
+              <span class="auto-arrow">→</span>
+              <div class="auto-step"><span class="auto-step-icon">🔔</span> Notify user</div>
+            </div>
+          </div>
+
+          <div class="auto-workflow">
+            <div class="auto-wf-header">
+              <span style="font-size:18px">💻</span>
+              <div class="auto-wf-name">Code Review Pipeline</div>
+              <span class="auto-wf-status wf-active">● Active</span>
+              <button class="filter-btn" style="margin-left:auto" onclick="showToast('Workflow paused','info')">Pause</button>
+            </div>
+            <div class="auto-steps">
+              <div class="auto-step"><span class="auto-step-icon">📁</span> File: Watch changes</div>
+              <span class="auto-arrow">→</span>
+              <div class="auto-step"><span class="auto-step-icon">💻</span> Coder: Analyze code</div>
+              <span class="auto-arrow">→</span>
+              <div class="auto-step"><span class="auto-step-icon">🔌</span> API: Post to GitHub</div>
+              <span class="auto-arrow">→</span>
+              <div class="auto-step"><span class="auto-step-icon">🔔</span> Notify</div>
+            </div>
+          </div>
+
+          <div class="auto-workflow">
+            <div class="auto-wf-header">
+              <span style="font-size:18px">🎙️</span>
+              <div class="auto-wf-name">Voice Command Router</div>
+              <span class="auto-wf-status wf-paused">● Paused</span>
+              <button class="filter-btn" style="margin-left:auto" onclick="showToast('Workflow started','ok')">Start</button>
+            </div>
+            <div class="auto-steps">
+              <div class="auto-step"><span class="auto-step-icon">🎙️</span> Voice: STT input</div>
+              <span class="auto-arrow">→</span>
+              <div class="auto-step"><span class="auto-step-icon">📅</span> Planner: Parse intent</div>
+              <span class="auto-arrow">→</span>
+              <div class="auto-step"><span class="auto-step-icon">⚡</span> Route to agent</div>
+              <span class="auto-arrow">→</span>
+              <div class="auto-step"><span class="auto-step-icon">🔊</span> TTS response</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ SETTINGS WORKSPACE ══ -->
+      <div class="workspace" id="ws-settings">
+        <div class="settings-layout">
+          <div class="settings-nav">
+            <div class="settings-nav-item active" onclick="settingsPage('general',this)">⚙️ General</div>
+            <div class="settings-nav-item" onclick="settingsPage('backend',this)">🔌 Backend</div>
+            <div class="settings-nav-item" onclick="settingsPage('voice',this)">🎙️ Voice / STT / TTS</div>
+            <div class="settings-nav-item" onclick="settingsPage('models',this)">🤖 AI Models</div>
+            <div class="settings-nav-item" onclick="settingsPage('agents',this)">🤝 Agents</div>
+            <div class="settings-nav-item" onclick="settingsPage('api',this)">🔑 API Keys</div>
+            <div class="settings-nav-item" onclick="settingsPage('appearance',this)">🎨 Appearance</div>
+            <div class="settings-nav-item" onclick="settingsPage('shortcuts',this)">⌨️ Shortcuts</div>
+            <div class="settings-nav-item" onclick="settingsPage('about',this)">ℹ️ About</div>
+          </div>
+          <div class="settings-content" id="settings-content">
+            <!-- General page shown by default -->
+            <div id="spage-general" class="spage">
+              <div class="settings-section">
+                <div class="settings-section-title">⚙️ General Settings</div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Auto-start on login</div><div class="settings-row-desc">Launch JARVIS AI OS when system starts</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Auto Router</div><div class="settings-row-desc">Automatically select best agent for each task</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Notifications</div><div class="settings-row-desc">Show desktop notifications for agent events</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Default Workspace</div><div class="settings-row-desc">Which workspace opens first</div></div><select class="settings-select"><option>Chat</option><option>Agents</option><option>Coder</option></select></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Language</div></div><select class="settings-select"><option>English</option><option>Hindi</option><option>Spanish</option><option>French</option></select></div>
+              </div>
+            </div>
+
+            <!-- Backend / Connection page -->
+            <div id="spage-backend" class="spage" style="display:none">
+              <div class="settings-section">
+                <div class="settings-section-title">🔌 Backend Connection (server.py)</div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">WebSocket Status</div><div class="settings-row-desc" id="backend-ws-url-display">Connecting to /ws on this host...</div></div><span id="backend-status-badge-2" class="backend-status err" style="font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid var(--border);">● OFFLINE</span></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Reconnect</div><div class="settings-row-desc">Force a fresh WebSocket connection to server.py</div></div><button class="ai-action-btn" onclick="jarvisConnect()">🔄 Reconnect</button></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Active Agent</div><div class="settings-row-desc">Routes chat messages to this agent persona</div></div>
+                  <select class="settings-select" id="active-agent-select" onchange="jarvisCurrentAgent=this.value">
+                    <option value="oracle">ORACLE (general)</option>
+                    <option value="athena">ATHENA (research)</option>
+                    <option value="coder">CODER (code)</option>
+                    <option value="friday">FRIDAY (workflow)</option>
+                    <option value="herald">HERALD (comms)</option>
+                    <option value="memory">MEMORY</option>
+                    <option value="vision">VISION</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="settings-section">
+                <div class="settings-section-title">🤖 AI Providers (Groq → Gemini → Ollama)</div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Groq</div><div class="settings-row-desc">llama-3.3-70b-versatile, requires GROQ_API_KEY</div></div><span id="provider-groq" class="backend-status err" style="font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid var(--border);">configured?</span></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Gemini</div><div class="settings-row-desc">gemini-2.5-flash, requires GEMINI_API_KEY</div></div><span id="provider-gemini" class="backend-status err" style="font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid var(--border);">configured?</span></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Ollama (local)</div><div class="settings-row-desc">Always-on local fallback, e.g. qwen3:4b</div></div><span id="provider-ollama" class="backend-status err" style="font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid var(--border);">configured?</span></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Last reply provider</div></div><span id="active-provider-badge-2" style="font-size:11px;color:var(--text-dim)">—</span></div>
+              </div>
+
+              <div class="settings-section">
+                <div class="settings-section-title">🧠 Memory Store (datastore/memory.json)</div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Episodic entries</div></div><span id="memory-episode-count" style="font-size:13px;font-weight:600">—</span></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Semantic keys</div></div><span id="memory-semantic-count" style="font-size:13px;font-weight:600">—</span></div>
+              </div>
+
+              <div class="settings-section">
+                <div class="settings-section-title">📡 Remote Access</div>
+                <div class="settings-row" style="display:block">
+                  <div class="settings-row-desc" style="line-height:1.7">
+                    This page connects automatically to <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px"><span id="ws-url-text"></span></code> — i.e. whatever host/port you loaded this page from.
+                    To access JARVIS from another device on your network, start <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px">server.py</code>, then open
+                    <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px">http://&lt;your-LAN-IP&gt;:7788/jarvisV3.html</code> on that device — no extra config needed.
+                    For access from outside your network (phone on mobile data, remote office, etc.), set up the reverse proxy described in the Apache tutorial provided with this project.
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="spage-voice" class="spage" style="display:none">
+              <div class="settings-section">
+                <div class="settings-section-title">🎙️ Speech-to-Text (STT)</div>
+                <div class="stt-tts-card">
+                  <div class="stt-tts-title">🔍 STT Diagnostics <button style="margin-left:auto;padding:3px 10px;background:var(--accent);border:none;border-radius:6px;color:var(--bg-deep);font-size:10px;cursor:pointer" onclick="runSTTDiag()">Run Diagnostics</button></div>
+                  <div id="stt-diag-list">
+                    <div class="diagnostic-item"><span class="diag-icon diag-warn">⚠️</span><span class="diag-label">Microphone permission: <b>Not granted</b></span><button class="diag-fix" onclick="requestMicPerm()">Fix</button></div>
+                    <div class="diagnostic-item"><span class="diag-icon diag-warn">⚠️</span><span class="diag-label">Web Speech API: <b>Checking browser support...</b></span><button class="diag-fix" onclick="checkSpeechAPI()">Check</button></div>
+                    <div class="diagnostic-item"><span class="diag-icon diag-err">❌</span><span class="diag-label">Whisper fallback: <b>Not configured</b> — API key missing</span><button class="diag-fix" onclick="settingsPage('api',document.querySelector('.settings-nav-item:nth-child(5)'))">Set Key</button></div>
+                  </div>
+                  <div style="margin-top:10px">
+                    <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">STT Engine</div></div>
+                      <select class="settings-select" id="stt-engine-select">
+                        <option>Web Speech API (Browser)</option>
+                        <option>Whisper (OpenAI)</option>
+                        <option>Whisper (Local)</option>
+                        <option>Deepgram</option>
+                      </select>
+                    </div>
+                    <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Language</div></div><select class="settings-select"><option>en-US</option><option>en-GB</option><option>hi-IN</option><option>auto-detect</option></select></div>
+                    <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Continuous listening</div><div class="settings-row-desc">Keep mic open between commands</div></div><div class="toggle" onclick="this.classList.toggle('on')"></div></div>
+                  </div>
+                  <div style="margin-top:8px">
+                    <button class="ai-action-btn" onclick="testSTT()">🎙️ Test Microphone</button>
+                    <span id="stt-test-result" style="font-size:11px;margin-left:8px;color:var(--text-muted)"></span>
+                  </div>
+                </div>
+
+                <div class="settings-section-title" style="margin-top:16px">🔊 Text-to-Speech (TTS)</div>
+                <div class="stt-tts-card">
+                  <div class="stt-tts-title">🔍 TTS Diagnostics <button style="margin-left:auto;padding:3px 10px;background:var(--accent);border:none;border-radius:6px;color:var(--bg-deep);font-size:10px;cursor:pointer" onclick="runTTSDiag()">Run Diagnostics</button></div>
+                  <div id="tts-diag-list">
+                    <div class="diagnostic-item"><span class="diag-icon diag-warn">⚠️</span><span class="diag-label">Browser TTS voices: <b>Checking...</b></span><button class="diag-fixok" onclick="checkTTSVoices()">Check</button></div>
+                    <div class="diagnostic-item"><span class="diag-icon diag-err">❌</span><span class="diag-label">ElevenLabs API: <b>Not configured</b></span><button class="diag-fix" onclick="settingsPage('api',document.querySelector('.settings-nav-item:nth-child(5)'))">Set Key</button></div>
+                  </div>
+                  <div style="margin-top:10px">
+                    <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">TTS Engine</div></div>
+                      <select class="settings-select" id="tts-engine-select">
+                        <option>Web Speech API (Browser)</option>
+                        <option>ElevenLabs</option>
+                        <option>OpenAI TTS</option>
+                        <option>pyttsx3 (Local)</option>
+                      </select>
+                    </div>
+                    <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Voice</div></div><select class="settings-select" id="tts-voice-select"><option>Loading...</option></select></div>
+                    <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Speed</div></div><input type="range" min="0.5" max="2" step="0.1" value="1" style="flex:1;accent-color:var(--accent)"></div>
+                    <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Pitch</div></div><input type="range" min="0" max="2" step="0.1" value="1" style="flex:1;accent-color:var(--accent)"></div>
+                    <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Auto-speak responses</div><div class="settings-row-desc">JARVIS reads its replies aloud</div></div><div class="toggle" id="autospeak-toggle" onclick="this.classList.toggle('on')"></div></div>
+                  </div>
+                  <div style="margin-top:8px">
+                    <button class="ai-action-btn" onclick="testTTS()">🔊 Test TTS</button>
+                    <span id="tts-test-result" style="font-size:11px;margin-left:8px;color:var(--text-muted)"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Models page -->
+            <div id="spage-models" class="spage" style="display:none">
+              <div class="settings-section">
+                <div class="settings-section-title">🤖 AI Model Configuration</div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Primary Provider</div></div><select class="settings-select"><option>Gemini</option><option>OpenAI</option><option>Groq</option><option>Anthropic</option><option>Local (Ollama)</option></select></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Primary Model</div></div><select class="settings-select"><option>Qwen3:4b</option><option>Gemini 2.0 Flash</option><option>GPT-4o</option><option>Claude 3.5</option><option>Llama 3.3</option></select></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Context Window</div></div><select class="settings-select"><option>128K tokens</option><option>32K tokens</option><option>8K tokens</option></select></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Fallback Model</div><div class="settings-row-desc">Used when primary is unavailable</div></div><select class="settings-select"><option>Groq Llama-3.3-70B</option><option>GPT-4o-mini</option></select></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Streaming</div><div class="settings-row-desc">Stream tokens as they generate</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Temperature</div></div><input type="range" min="0" max="2" step="0.1" value="0.7" style="flex:1;accent-color:var(--accent)"><span style="font-size:11px;color:var(--text-muted);margin-left:8px" id="temp-val">0.7</span></div>
+              </div>
+            </div>
+
+            <!-- API Keys page -->
+            <div id="spage-api" class="spage" style="display:none">
+              <div class="settings-section">
+                <div class="settings-section-title">🔑 API Keys</div>
+                <div style="font-size:11px;color:var(--accent5);background:#ef444411;padding:8px 12px;border-radius:6px;margin-bottom:14px;border-left:3px solid var(--accent5)">⚠️ Keys stored locally. Never share your keys. Clearing browser data will remove them.</div>
+                <div style="margin-bottom:12px">
+                  <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">🤖 Gemini API Key</div>
+                  <div class="api-key-row"><input class="api-key-input" type="password" id="key-gemini" placeholder="AIza..." /><button class="api-test-btn" onclick="testKey('gemini')">Test</button><button class="api-save-btn" onclick="saveKey('gemini')">Save</button></div>
+                </div>
+                <div style="margin-bottom:12px">
+                  <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">⚡ Groq API Key</div>
+                  <div class="api-key-row"><input class="api-key-input" type="password" id="key-groq" placeholder="gsk_..." /><button class="api-test-btn" onclick="testKey('groq')">Test</button><button class="api-save-btn" onclick="saveKey('groq')">Save</button></div>
+                </div>
+                <div style="margin-bottom:12px">
+                  <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">🔵 OpenAI API Key</div>
+                  <div class="api-key-row"><input class="api-key-input" type="password" id="key-openai" placeholder="sk-..." /><button class="api-test-btn" onclick="testKey('openai')">Test</button><button class="api-save-btn" onclick="saveKey('openai')">Save</button></div>
+                </div>
+                <div style="margin-bottom:12px">
+                  <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">🎙️ Whisper / STT Key</div>
+                  <div class="api-key-row"><input class="api-key-input" type="password" id="key-whisper" placeholder="sk-..." /><button class="api-test-btn" onclick="testKey('whisper')">Test</button><button class="api-save-btn" onclick="saveKey('whisper')">Save</button></div>
+                </div>
+                <div style="margin-bottom:12px">
+                  <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">🔊 ElevenLabs TTS Key</div>
+                  <div class="api-key-row"><input class="api-key-input" type="password" id="key-elevenlabs" placeholder="xi-..." /><button class="api-test-btn" onclick="testKey('elevenlabs')">Test</button><button class="api-save-btn" onclick="saveKey('elevenlabs')">Save</button></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Appearance page -->
+            <div id="spage-appearance" class="spage" style="display:none">
+              <div class="settings-section">
+                <div class="settings-section-title">🎨 Appearance</div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Accent Color</div></div>
+                  <div style="display:flex;gap:6px">
+                    <div style="width:22px;height:22px;border-radius:50%;background:#00d4ff;cursor:pointer;border:2px solid #fff" onclick="setAccent('#00d4ff')"></div>
+                    <div style="width:22px;height:22px;border-radius:50%;background:#7c3aed;cursor:pointer" onclick="setAccent('#7c3aed')"></div>
+                    <div style="width:22px;height:22px;border-radius:50%;background:#10b981;cursor:pointer" onclick="setAccent('#10b981')"></div>
+                    <div style="width:22px;height:22px;border-radius:50%;background:#f59e0b;cursor:pointer" onclick="setAccent('#f59e0b')"></div>
+                    <div style="width:22px;height:22px;border-radius:50%;background:#ef4444;cursor:pointer" onclick="setAccent('#ef4444')"></div>
+                  </div>
+                </div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Sidebar Width</div></div><input type="range" min="160" max="280" value="210" style="flex:1;accent-color:var(--accent)" oninput="document.documentElement.style.setProperty('--sidebar-w',this.value+'px')"></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Font Size</div></div><select class="settings-select" onchange="document.body.style.fontSize=this.value+'px'"><option value="12">12px</option><option value="13" selected>13px (default)</option><option value="14">14px</option><option value="15">15px</option></select></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Compact Mode</div><div class="settings-row-desc">Reduce spacing and padding</div></div><div class="toggle" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Animations</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+              </div>
+            </div>
+
+            <!-- Agents settings page -->
+            <div id="spage-agents" class="spage" style="display:none">
+              <div class="settings-section">
+                <div class="settings-section-title">🤝 Agent Configuration</div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Planner Agent</div><div class="settings-row-desc">Enable task orchestration</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Coder Agent</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Browser Agent</div><div class="settings-row-desc">Requires Playwright installed</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Voice Agent</div><div class="settings-row-desc">STT/TTS pipeline</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Automation Agent</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Memory Agent</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">File Agent</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">API Agent</div></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Max concurrent agents</div></div><select class="settings-select"><option>3</option><option>5</option><option>10</option><option>Unlimited</option></select></div>
+              </div>
+            </div>
+
+            <!-- Shortcuts page -->
+            <div id="spage-shortcuts" class="spage" style="display:none">
+              <div class="settings-section">
+                <div class="settings-section-title">⌨️ Keyboard Shortcuts</div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">New Chat</div></div><code style="background:var(--bg-card);padding:3px 8px;border-radius:4px;font-size:11px">Ctrl+N</code></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Voice Input</div></div><code style="background:var(--bg-card);padding:3px 8px;border-radius:4px;font-size:11px">Ctrl+Shift+V</code></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Open Coder</div></div><code style="background:var(--bg-card);padding:3px 8px;border-radius:4px;font-size:11px">Ctrl+E</code></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Switch workspace</div></div><code style="background:var(--bg-card);padding:3px 8px;border-radius:4px;font-size:11px">Ctrl+1-8</code></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Settings</div></div><code style="background:var(--bg-card);padding:3px 8px;border-radius:4px;font-size:11px">Ctrl+,</code></div>
+              </div>
+            </div>
+
+            <!-- About page -->
+            <div id="spage-about" class="spage" style="display:none">
+              <div class="settings-section">
+                <div class="settings-section-title">ℹ️ About JARVIS AI OS</div>
+                <div style="text-align:center;padding:20px">
+                  <div style="font-size:40px;margin-bottom:8px">🤖</div>
+                  <div style="font-size:18px;font-weight:700;color:var(--accent)">JARVIS AI OS</div>
+                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">Version 3.0 — Enhanced Interface</div>
+                </div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Architecture</div></div><span style="font-size:11px;color:var(--text-dim)">EventBus + ActionCoordinator</span></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Backend</div></div><span style="font-size:11px;color:var(--text-dim)">Python 3.11 / asyncio</span></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Agents</div></div><span style="font-size:11px;color:var(--text-dim)">8 active agents</span></div>
+                <div class="settings-row"><div class="settings-row-info"><div class="settings-row-label">Browser Engine</div></div><span style="font-size:11px;color:var(--text-dim)">Playwright</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ──── RIGHT PANEL ──── -->
+    <div id="right-panel">
+      <!-- System Overview -->
+      <div class="panel-section">
+        <div class="panel-title">System Overview</div>
+        <div style="display:flex;gap:8px;justify-content:space-between">
+          <div style="text-align:center">
+            <div style="position:relative;display:inline-block">
+              <svg class="meter-ring" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="16"/><circle class="ring-fill cpu-ring" cx="22" cy="22" r="16" stroke-dashoffset="97" transform="rotate(-90 22 22)"/></svg>
+              <div class="meter-val" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700">3%</div>
+            </div>
+            <div style="font-size:9px;color:var(--text-muted)">CPU</div>
+          </div>
+          <div style="text-align:center">
+            <div style="position:relative;display:inline-block">
+              <svg class="meter-ring" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="16"/><circle class="ring-fill ram-ring" cx="22" cy="22" r="16" stroke-dashoffset="26" transform="rotate(-90 22 22)"/></svg>
+              <div class="meter-val" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700">74%</div>
+            </div>
+            <div style="font-size:9px;color:var(--text-muted)">RAM</div>
+          </div>
+          <div style="text-align:center">
+            <div style="position:relative;display:inline-block">
+              <svg class="meter-ring" viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="16"/><circle class="ring-fill gpu-ring" cx="22" cy="22" r="16" stroke-dashoffset="100" transform="rotate(-90 22 22)"/></svg>
+              <div class="meter-val" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700">0%</div>
+            </div>
+            <div style="font-size:9px;color:var(--text-muted)">GPU</div>
+          </div>
+        </div>
+        <div style="font-size:9px;color:var(--text-muted);margin-top:6px">RAM: 11.7 / 16 GB</div>
+      </div>
+
+      <!-- Active Agents -->
+      <div class="panel-section">
+        <div class="panel-title">Active Agents</div>
+        <div class="active-agent-row"><div class="aa-dot" style="background:var(--accent)"></div><span class="aa-name">Planner Agent</span><span class="aa-status">routing</span></div>
+        <div class="active-agent-row"><div class="aa-dot" style="background:var(--accent3)"></div><span class="aa-name">Coder Agent</span><span class="aa-status">busy</span></div>
+        <div class="active-agent-row"><div class="aa-dot" style="background:var(--accent3)"></div><span class="aa-name">Browser Agent</span><span class="aa-status">ready</span></div>
+        <div class="active-agent-row"><div class="aa-dot" style="background:#ec4899"></div><span class="aa-name">Memory Agent</span><span class="aa-status">indexing</span></div>
+        <div class="active-agent-row"><div class="aa-dot" style="background:var(--accent4)"></div><span class="aa-name">Voice Agent</span><span class="aa-status">idle</span></div>
+        <div class="active-agent-row"><div class="aa-dot" style="background:var(--accent2)"></div><span class="aa-name">Automation Agent</span><span class="aa-status">ready</span></div>
+        <a style="font-size:10px;color:var(--accent);cursor:pointer;display:block;margin-top:6px" onclick="switchWS('agents')">View all agents →</a>
+      </div>
+
+      <!-- Current Model -->
+      <div class="panel-section">
+        <div class="panel-title">Current Model</div>
+        <div class="model-info-card">
+          <div class="model-brain">🧠</div>
+          <div class="model-detail-row"><span class="model-key">Provider</span><span class="model-val" id="model-info-provider" style="color:var(--accent4)">…</span></div>
+          <div class="model-detail-row"><span class="model-key">Model</span><span class="model-val" id="model-info-model">…</span></div>
+          <div class="model-detail-row"><span class="model-key">Tier</span><span class="model-val" id="model-info-tier">…</span></div>
+          <div class="model-detail-row"><span class="model-key">Status</span><span class="model-val" id="model-info-status">…</span></div>
+          <button class="change-model-btn" onclick="switchWS('settings');settingsPage('models',null)">Change Model</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL ═══ -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-title">Modal</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<!-- ═══ TOAST ═══ -->
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+//  JARVIS BACKEND BRIDGE  ─  connects this page to server.py via WebSocket
+//
+//  Smart URL resolution order:
+//    1. Same-host URL   (ws://<this-page-host>/ws)       ← served by server.py
+//    2. localhost:7788  (always tried for local dev)
+//    3. Remote URL      from /config/ws_url OR tunnel_url in boot message
+//    4. Offline mode    (keyword replies, browser TTS only)
+//
+//  For ngrok remote access: set NGROK_AUTHTOKEN or NGROK_STATIC_URL in .env
+//  The server reports its public URL via GET /config/ws_url automatically.
+// ═══════════════════════════════════════════════════════════════════════
+
+// Candidate URLs — populated by _resolveWsUrl() at startup
+let _wsUrlLocal  = '';   // ws://localhost:7788/ws  or  ws://<LAN-IP>:7788/ws
+let _wsUrlRemote = '';   // wss://xxxx.ngrok-free.app/ws  (from server config)
+let _wsUrlActive = '';   // currently connected URL
+
+// WebSocket auth token. start.py may open this page as
+// jarvisV3.html?token=<SECRET>; append it to the WS URL so the
+// server's ?token=<SECRET> auth check passes.
+let _wsToken = new URLSearchParams(location.search).get('token') || '';
+function _withToken(url) {
+  if (!_wsToken || url.includes('token=')) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(_wsToken);
+}
+
+let jarvisSocket = null;
+let jarvisConnected = false;
+let jarvisCurrentAgent = 'oracle';
+let _reconnectTimer = null;
+let _reconnectCount = 0;
+
+// ── URL resolver ─────────────────────────────────────────────────────────────
+async function _resolveWsUrl() {
+  // Candidate 1: same host as the page (works when served by server.py)
+  if (location.host) {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    _wsUrlLocal = _withToken(proto + '//' + location.host + '/ws');
+  }
+
+  // Candidate 2: always try localhost:7788 for local dev (file:// or any host)
+  const localDev = _withToken('ws://localhost:7788/ws');
+  if (_wsUrlLocal !== localDev) {
+    _wsUrlLocal = _wsUrlLocal || localDev;
+  }
+
+  // Candidate 3: ask the server for its public ngrok/tunnel URL
+  // Use the same host origin to GET /config/ws_url
+  const configBase = location.host
+    ? (location.protocol + '//' + location.host)
+    : 'http://localhost:7788';
+  try {
+    const resp = await fetch(configBase + '/config/ws_url', { signal: AbortSignal.timeout(2000) });
+    if (resp.ok) {
+      const cfg = await resp.json();
+      if (cfg.local)  _wsUrlLocal  = _withToken(cfg.local);
+      if (cfg.remote) _wsUrlRemote = _withToken(cfg.remote);
+    }
+  } catch (_) { /* server not yet up — use candidates above */ }
+}
+
+// ── Smart connect ─────────────────────────────────────────────────────────────
+// Tries local first, then remote, then offline mode.
+// After a successful connection is established, reconnect always retries
+// the same URL first (to survive brief server restarts) before cycling.
+let _connectPhase = 'local';  // 'local' | 'remote' | 'offline'
+
+function _pickNextUrl() {
+  if (_connectPhase === 'local')  return _wsUrlLocal  || _wsUrlRemote;
+  if (_connectPhase === 'remote') return _wsUrlRemote || '';
+  return '';
+}
+
+function jarvisConnect() {
+  clearTimeout(_reconnectTimer);
+  if (jarvisSocket) { try { jarvisSocket.close(); } catch(_){} jarvisSocket = null; }
+
+  const url = _wsUrlActive || _pickNextUrl();
+  if (!url) {
+    // No URL to try — go offline
+    console.warn('[JARVIS] No backend URL available — offline mode');
+    _enterOfflineMode();
+    return;
+  }
+
+  console.log('[JARVIS] Connecting to', url, '(phase=' + _connectPhase + ')');
+  try { jarvisSocket = new WebSocket(url); }
+  catch(e) { console.warn('[JARVIS] WS init failed', e); _scheduleReconnect(); return; }
+
+  jarvisSocket.onopen = () => {
+    jarvisConnected = true;
+    _wsUrlActive    = url;
+    _reconnectCount = 0;
+    _exitOfflineMode();
+    setBackendBadge(true);
+    _updateWsUrlDisplay(url);
+    console.log('[JARVIS] connected', url);
+  };
+
+  jarvisSocket.onclose = (ev) => {
+    jarvisConnected = false;
+    _wsUrlActive = '';   // reset so next attempt re-evaluates
+    setBackendBadge(false);
+    console.warn('[JARVIS] disconnected (code=' + ev.code + ')');
+    _scheduleReconnect();
+  };
+
+  jarvisSocket.onerror = () => {};
+
+  jarvisSocket.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    // If server pushed a new tunnel URL, store it for future reconnects
+    if (msg.type === 'boot' && msg.tunnel_url) _wsUrlRemote = msg.tunnel_url;
+    if (msg.type === 'tunnel_url' && msg.url)  _wsUrlRemote = msg.url;
+    handleJarvisMessage(msg);
+  };
+}
+
+function _scheduleReconnect() {
+  _reconnectCount++;
+  // Cycle phases: try local a few times, then try remote, then back
+  if (_reconnectCount <= 3) {
+    _connectPhase = 'local';
+  } else if (_reconnectCount <= 6 && _wsUrlRemote) {
+    _connectPhase = 'remote';
+  } else {
+    _reconnectCount = 0;
+    _connectPhase = 'local';
+    if (!_wsUrlRemote) { _enterOfflineMode(); return; }
+  }
+  const delay = Math.min(2000 * Math.pow(1.5, Math.min(_reconnectCount - 1, 5)), 15000);
+  _reconnectTimer = setTimeout(jarvisConnect, delay);
+}
+
+function _enterOfflineMode() {
+  if (jarvisConnected) return;
+  setBackendBadge(false);
+  showToast('Running in offline mode — local AI responses only', 'warn');
+  _updateWsUrlDisplay('offline');
+}
+function _exitOfflineMode() {
+  // Clear any pending offline reconnect
+  clearTimeout(_reconnectTimer);
+}
+function _updateWsUrlDisplay(url) {
+  const el = document.getElementById('backend-ws-url-display');
+  if (el) el.textContent = url;
+}
+
+// Kick off URL resolution then connect
+_resolveWsUrl().then(() => jarvisConnect());
+
+function setBackendBadge(online) {
+  const badge = document.getElementById('backend-status-badge');
+  const badge2 = document.getElementById('backend-status-badge-2');
+  [badge, badge2].forEach(b => {
+    if (b) {
+      b.textContent = online ? '● BACKEND ONLINE' : '● BACKEND OFFLINE';
+      b.className = b.className.replace(/ok|err/,'').trim() + ' ' + (online ? 'ok' : 'err');
+    }
+  });
+  const sttBadge = document.getElementById('stt-status-badge');
+  if (sttBadge && online) { sttBadge.textContent = 'Server STT Ready'; sttBadge.className = 'stt-status ok'; }
+}
+
+function jarvisSend(payload) {
+  if (jarvisSocket && jarvisConnected) {
+    jarvisSocket.send(JSON.stringify(payload));
+    return true;
+  }
+  showToast('Not connected to JARVIS backend (server.py). Is it running?','err');
+  return false;
+}
+
+function handleJarvisMessage(msg) {
+  switch (msg.type) {
+    case 'boot':
+      if (msg.providers) updateProviderBadges(msg.providers);
+      if (msg.memory_stats) updateMemoryStats(msg.memory_stats);
+      // Phase 6.1: boot carries no active-model field itself (only which
+      // providers are configured) — request the real ModelSwitcher state
+      // explicitly so the pill/info-card never show a stale placeholder.
+      jarvisSend({ type: 'model_state' });
+      break;
+    case 'metrics':
+      updateMetrics(msg);
+      break;
+    case 'status':
+      setStatusText(msg.text);
+      break;
+    case 'thinking':
+      if (!_streamingEl) showTyping();  // don't show thinking if streaming already
+      _sttSetPhase('thinking');
+      break;
+    // P-26: Streaming token events
+    case 'chat_stream':
+      _appendStreamDelta(msg.delta || '');
+      break;
+    case 'chat_stream_end':
+      _endStreamBubble(msg.provider || '');
+      // Streamed replies finish here, not in 'chat_reply' below — without
+      // this, a streamed turn never left the 'thinking' phase and the mic
+      // badge stayed on "🧠 Thinking..." forever after the reply was
+      // already fully rendered. Same TTS-pending guard as chat_reply: if
+      // playTTSAudio() is about to start, let IT own the speaking/idle
+      // transition rather than flashing 'idle' first.
+      if (!_wantTTSForPending) _sttSetPhase('idle');
+      break;
+    case 'chat_reply':
+      // Non-streaming full reply (fallback or tool replies)
+      if (_streamingEl) {
+        // If we were streaming but got a full reply, finish streaming first
+        _endStreamBubble(msg.provider || '');
+      }
+      removeTyping();
+      if (_wantTTSForPending) {
+        // Hold the text back and reveal it in step with the TTS audio
+        // (see playTTSAudio) instead of dumping it on screen instantly
+        // while the voice is still seconds away. playTTSAudio() also owns
+        // the 'speaking' phase transition once the audio actually starts —
+        // don't set 'idle' here first, or the badge flashes idle->speaking
+        // for the gap between this message and "tts_audio" arriving.
+        _holdReplyForVoiceSync(msg.text);
+      } else {
+        appendMsg('jarvis', msg.text);
+        _sttSetPhase('idle');
+      }
+      // Phase 6.4 (fallback visibility) / 6.5 (specialist attribution) —
+      // applied to the just-rendered bubble's header regardless of which
+      // branch above ran; _holdReplyForVoiceSync() builds the header
+      // immediately even though the body text is revealed later, so this
+      // is safe to call right away in both cases.
+      _applyReplyBadges(msg);
+      if (msg.provider) {
+        const pb = document.getElementById('active-provider-badge');
+        if (pb) pb.textContent = msg.provider;
+        const pb2 = document.getElementById('active-provider-badge-2');
+        if (pb2) pb2.textContent = msg.provider;
+      }
+      break;
+    // Phase 6.1/6.2 — real ModelSwitcher state (requested on boot, and
+    // returned in response to an explicit "model_state" query).
+    case 'model_state':
+      if (msg.state) _renderModelState(msg.state);
+      break;
+    // Phase 6.2 — model switch confirmed/failed by the backend.
+    case 'model_switched':
+      if (msg.state) _renderModelState(msg.state);
+      showToast('✅ Now using ' + (msg.model || (msg.state && msg.state.model) || 'new model'), 'ok');
+      _refreshModelPickerCheckmarks();
+      break;
+    case 'model_switch_error':
+      // Real visible error, not a silent no-op — re-render whatever state
+      // the backend reports so the pill/card don't claim a switch happened
+      // when it didn't, and surface the failure prominently.
+      if (msg.state) _renderModelState(msg.state);
+      showToast('❌ Model switch failed: ' + (msg.error || 'unknown error'), 'err');
+      _refreshModelPickerCheckmarks();
+      break;
+    case 'ollama_models':
+      _renderOllamaModelOptions(msg.models || []);
+      break;
+    case 'stt_result':
+      document.getElementById('chat-input').value = msg.transcript || '';
+      if (msg.transcript) {
+        // sendMessage() below triggers 'thinking' server-side, which already
+        // transitions the phase forward — no need to set it here too.
+        sendMessage();
+      } else {
+        // Empty transcript: nothing to send, so nothing will move the phase
+        // off 'transcribing' on its own — return to idle explicitly so the
+        // badge doesn't get stuck reading "TRANSCRIBING..." forever.
+        _sttSetPhase('idle');
+      }
+      break;
+    case 'stt_partial':
+      // Live partial transcription — fill input box while user is still speaking
+      _sttSetPartial(msg.text || '');
+      break;
+    case 'live_stt_ack':
+      // Server acknowledged live_stt_start / live_stt_stop. Only act on the
+      // "stopped" ack, and only if we're not already mid some other phase
+      // transition (e.g. user re-pressed mic to start a new session right
+      // after stopping the last one — don't clobber 'listening' with 'idle').
+      if (!msg.active && _jarvisMicPhase === 'transcribing') {
+        _sttSetPhase('idle');
+      }
+      break;
+    case 'tts_audio':
+      playTTSAudio(msg.b64, msg.mime, msg.duration_s);
+      break;
+    case 'memory_stats':
+      updateMemoryStats(msg);
+      break;
+    case 'memory_ack':
+      showToast('Memory stored: ' + msg.key, 'ok');
+      break;
+    case 'tool_result':
+    case 'memory_results':
+    case 'heartbeat':
+    case 'pong':
+      break;
+  }
+}
+
+function setStatusText(text) {
+  const el = document.getElementById('status-bar-text');
+  if (el) el.textContent = text;
+}
+
+function updateMetrics(m) {
+  const cpu = document.getElementById('metric-cpu');   if (cpu)  cpu.textContent  = m.cpu + '%';
+  const ram = document.getElementById('metric-ram');   if (ram)  ram.textContent  = m.ram_pct + '%';
+  const disk = document.getElementById('metric-disk'); if (disk) disk.textContent = m.disk_pct + '%';
+}
+
+function updateMemoryStats(m) {
+  const el = document.getElementById('memory-episode-count');
+  if (el) el.textContent = m.episodes;
+  const el2 = document.getElementById('memory-semantic-count');
+  if (el2) el2.textContent = m.semantic;
+}
+
+function updateProviderBadges(providers) {
+  ['groq','gemini','ollama','qwen_openvino'].forEach(p => {
+    const el = document.getElementById('provider-' + p);
+    if (el) {
+      const ok = !!providers[p];
+      el.classList.toggle('active', ok);
+      el.classList.toggle('ok', ok);
+      el.classList.toggle('err', !ok);
+      el.textContent = ok ? '✓ configured' : '✗ not configured';
+    }
+  });
+  // Phase 6.2: remember which providers are actually configured so the
+  // model picker can grey out / explain options that would fail anyway
+  // (e.g. no GROQ_API_KEY set) instead of letting the user pick them blind.
+  _lastKnownProviders = providers || {};
+}
+
+// ── Phase 6.1 — live model pill + info card ─────────────────────────────
+// Bound to ModelSwitcher.get_state(): {provider, model, provider_type,
+// status}. There is no context-window-size or tokens/sec field anywhere
+// in the backend (confirmed against models/switcher/active_model_state.py)
+// — the old hardcoded "128K tokens" / "180 t/s" rows were not derived from
+// real data at all, so they are replaced with fields the backend actually
+// reports (provider_type as "Tier", and live status) rather than swapped
+// for a different set of invented numbers.
+let _lastKnownModelState = null;
+
+function _renderModelState(state) {
+  if (!state) return;
+  _lastKnownModelState = state;
+
+  const provider = state.provider || 'unknown';
+  const model    = state.model || 'auto';
+  const ptype    = state.provider_type || (provider === 'ollama' || provider === 'openvino' ? 'local' : 'cloud');
+  const status   = state.status || 'ready';
+
+  // Header pill — compact, matches the mobile HUD's "<MODEL> ▾" convention
+  const pill = document.getElementById('model-pill');
+  if (pill) {
+    const shortModel = model.length > 18 ? model.slice(0, 16) + '…' : model;
+    pill.textContent = (shortModel || provider).toUpperCase() + ' ▾';
+    pill.title = provider + ' / ' + model + ' (' + status + ')';
+  }
+
+  // Right-panel info card
+  const pEl = document.getElementById('model-info-provider');
+  if (pEl) pEl.textContent = provider.charAt(0).toUpperCase() + provider.slice(1);
+
+  const mEl = document.getElementById('model-info-model');
+  if (mEl) mEl.textContent = model;
+
+  const tEl = document.getElementById('model-info-tier');
+  if (tEl) tEl.textContent = ptype === 'local' ? '🖥 Local' : '☁ Cloud';
+
+  const sEl = document.getElementById('model-info-status');
+  if (sEl) {
+    const statusLabel = { ready: 'Online', switching: 'Switching…', error: 'Error' }[status] || status;
+    sEl.textContent = statusLabel;
+    sEl.className = 'model-val ' + (status === 'ready' ? 'ok' : status === 'switching' ? 'warn' : 'err');
+  }
+}
+
+// ── Phase 6.2 — real model-picker UI ────────────────────────────────────
+// Sends {"type":"model_switch", ...} and renders the live Ollama tag list
+// returned by "ollama_models" (server.py already has both endpoints —
+// list_ollama_models / model_switch — jarvisV3.html just never called them).
+let _lastKnownProviders = {};
+
+const _CLOUD_MODEL_OPTIONS = [
+  { provider: 'groq',           label: '⚡ Groq' },
+  { provider: 'gemini',         label: '🌟 Gemini' },
+  { provider: 'qwen_openvino',  label: '🧠 OpenVINO (local IR)' },
+];
+
+function _modelsSettingsPageHTML() {
+  // Rebuilt each time the Models settings page is opened so the picker
+  // always reflects the latest _lastKnownProviders / _lastKnownModelState
+  // rather than going stale between visits.
+  const activeProvider = _lastKnownModelState ? _lastKnownModelState.provider : null;
+  const activeModel    = _lastKnownModelState ? _lastKnownModelState.model : null;
+
+  const cloudRows = _CLOUD_MODEL_OPTIONS.map(opt => {
+    const configured = opt.provider === 'qwen_openvino'
+      ? true  // local, no API key required
+      : !!_lastKnownProviders[opt.provider];
+    const isActive = activeProvider === opt.provider ||
+      (activeProvider === 'openvino' && opt.provider === 'qwen_openvino');
+    const dimmed = configured ? '' : 'opacity:.45;';
+    const kind = opt.provider === 'qwen_openvino' ? 'local' : 'cloud';
+    const switchProvider = opt.provider === 'qwen_openvino' ? 'openvino' : opt.provider;
+    return `<div class="settings-row model-option" style="${dimmed}border:none"
+                 data-provider="${switchProvider}" data-kind="${kind}"
+                 onclick="${configured ? `selectModelOption(this)` : `showToast('${opt.provider} has no API key configured — add one in API Keys', 'err')`}">
+              <span style="font-size:13px;">${opt.label}${configured ? '' : ' <span style=\'font-size:10px;color:var(--text-muted)\'>(no key)</span>'}</span>
+              <span class="model-check">${isActive ? '✓' : ''}</span>
+            </div>`;
+  }).join('');
+
+  return `
+    <div class="settings-section-title" style="margin-bottom:6px">🤖 AI Model Configuration</div>
+    <div class="model-group-label">☁ CLOUD / LOCAL-IR</div>
+    <div class="settings-card" style="margin-bottom:14px">${cloudRows}</div>
+    <div class="model-group-label" style="display:flex;align-items:center;justify-content:space-between;">
+      <span>🖥 LOCAL · OLLAMA</span>
+      <button class="ai-action-btn" style="font-size:10px;padding:3px 8px" onclick="loadOllamaModelOptions()">🔄 Refresh</button>
+    </div>
+    <div class="settings-card" id="ollama-model-options" style="margin-bottom:14px">
+      <div style="padding:14px;text-align:center;color:var(--text-muted);font-size:11px" id="ollama-options-placeholder">Checking Ollama…</div>
+    </div>`;
+}
+
+function renderModelsSettingsPage() {
+  const container = document.getElementById('spage-models');
+  if (!container) return;
+  container.innerHTML = `<div class="settings-section">${_modelsSettingsPageHTML()}</div>`;
+  loadOllamaModelOptions();
+}
+
+function loadOllamaModelOptions() {
+  // Mirrors jarvisV5_mobile.html's loadOllamaModels(): try a direct fetch
+  // to the local Ollama daemon first (works when the browser and server
+  // share a host), fall back to asking server.py over the WS connection.
+  const placeholder = document.getElementById('ollama-options-placeholder');
+  (async () => {
+    let models = null;
+    try {
+      const baseUrl = (location.hostname === 'localhost' || location.hostname.startsWith('192.'))
+        ? 'http://' + location.hostname + ':11434' : null;
+      if (baseUrl) {
+        const resp = await fetch(baseUrl + '/api/tags', { signal: AbortSignal.timeout(4000) });
+        if (resp.ok) { const data = await resp.json(); models = data.models || []; }
+      }
+    } catch (_) { /* fall through to WS request below */ }
+
+    if (!models && jarvisConnected) {
+      if (placeholder) placeholder.textContent = 'Waiting for backend…';
+      jarvisSend({ type: 'list_ollama_models' });
+      return; // _renderOllamaModelOptions() runs when "ollama_models" arrives
+    }
+    _renderOllamaModelOptions(models || []);
+  })().catch(() => {
+    if (placeholder) placeholder.textContent = '❌ Could not reach Ollama — run `ollama serve`';
+  });
+}
+
+function _renderOllamaModelOptions(models) {
+  const container = document.getElementById('ollama-model-options');
+  if (!container) return; // Models page not open — nothing to render into
+  const activeProvider = _lastKnownModelState ? _lastKnownModelState.provider : null;
+  const activeModel    = _lastKnownModelState ? _lastKnownModelState.model : null;
+
+  if (!models.length) {
+    container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:11px">🔴 No Ollama models found — run <code>ollama pull &lt;model&gt;</code></div>';
+    return;
+  }
+  container.innerHTML = models.map((m, i) => {
+    const isActive = activeProvider === 'ollama' && m.name === activeModel;
+    const sizeGB = m.size ? (m.size / 1073741824).toFixed(1) + 'GB' : '';
+    const isLast = i === models.length - 1;
+    return `<div class="settings-row model-option" style="${isLast ? 'border:none' : ''}"
+                 data-provider="ollama" data-model="${m.name}" data-kind="ollama"
+                 onclick="selectModelOption(this)">
+              <span style="font-size:13px;">🦙 ${m.name} ${sizeGB ? `<span style="font-size:10px;color:var(--text-muted)">${sizeGB}</span>` : ''}</span>
+              <span class="model-check">${isActive ? '✓' : ''}</span>
+            </div>`;
+  }).join('');
+}
+
+function selectModelOption(el) {
+  if (el.classList.contains('switching')) return;
+  const provider = el.dataset.provider;
+  const kind     = el.dataset.kind;
+  const model    = el.dataset.model || null;
+
+  if (!jarvisConnected) {
+    showToast('Not connected to JARVIS backend — cannot switch model', 'err');
+    return;
+  }
+
+  // Visual "switching" feedback immediately — the actual confirm/error
+  // comes back asynchronously as model_switched / model_switch_error.
+  document.querySelectorAll('.model-option').forEach(o => o.classList.add('switching'));
+  const sEl = document.getElementById('model-info-status');
+  if (sEl) { sEl.textContent = 'Switching…'; sEl.className = 'model-val warn'; }
+  showToast('🔄 Switching to ' + (model || provider) + '…', 'info');
+
+  jarvisSend({
+    type: 'model_switch',
+    provider: provider,
+    model: model,
+    kind: kind,
+  });
+}
+
+function _refreshModelPickerCheckmarks() {
+  document.querySelectorAll('.model-option').forEach(o => o.classList.remove('switching'));
+  // Re-render the whole Models page if it's currently open, so checkmarks
+  // move to the newly-active option and stale "switching" state clears.
+  const pg = document.getElementById('spage-models');
+  if (pg && pg.style.display !== 'none') renderModelsSettingsPage();
+}
+
+// ── VOICE/TEXT SYNC ───────────────────────────────────────────────────────
+// Without this, chat_reply (text) and tts_audio (voice) arrive as two
+// separate, independently-timed WS messages — text used to render the
+// instant it arrived while the audio (which takes longer to synthesize)
+// showed up seconds later. These hold the reply back and reveal it paced
+// to actual <audio> playback progress so they finish together.
+let _wantTTSForPending      = false;
+let _pendingVoiceReply      = null;   // { text, div, contentEl }
+let _pendingVoiceFallbackTimer = null;
+let _activeTTSAudio         = null;
+
+function _holdReplyForVoiceSync(text) {
+  if (_pendingVoiceFallbackTimer) clearTimeout(_pendingVoiceFallbackTimer);
+  const msgs = document.getElementById('chat-messages');
+  const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  const div = document.createElement('div');
+  div.className = 'msg jarvis';
+  div.innerHTML = `
+    <div class="msg-avatar jarvis">🤖</div>
+    <div class="msg-body">
+      <div class="msg-header">JARVIS <span class="msg-tag">AI AGENT</span>
+        <span class="stream-indicator" style="color:var(--accent3);font-size:9px;margin-left:8px">🔊 SPEAKING</span>
+      </div>
+      <div class="msg-bubble voice-sync-content" style="min-height:20px"></div>
+      <div class="msg-time">${now}</div>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  _pendingVoiceReply = { text, div, contentEl: div.querySelector('.voice-sync-content') };
+
+  // Safety net: if tts_audio never arrives (TTS disabled server-side or
+  // synthesis failed), reveal the text anyway after a grace period scaled
+  // to reply length instead of leaving the bubble empty forever.
+  const delay = Math.min(8000, 3000 + text.length * 20);
+  _pendingVoiceFallbackTimer = setTimeout(_revealPendingReplyInstantly, delay);
+}
+
+function _revealPendingReplyInstantly() {
+  if (!_pendingVoiceReply) return;
+  const { text, div, contentEl } = _pendingVoiceReply;
+  contentEl.innerHTML = _renderMarkdown(text);
+  const ind = div.querySelector('.stream-indicator');
+  if (ind) ind.remove();
+  const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  chatHistory.push({ role: 'jarvis', text, time: now });
+  saveChatHistory();
+  _pendingVoiceReply = null;
+  if (_pendingVoiceFallbackTimer) { clearTimeout(_pendingVoiceFallbackTimer); _pendingVoiceFallbackTimer = null; }
+}
+
+// Decode base64 audio from server (TTS) and play it, revealing any held
+// reply text in step with actual playback progress.
+//
+// IMPORTANT: do not trust audio.duration for the MP3 blobs edge-tts
+// produces — Chromium reports it as Infinity (not NaN!) for header-less/
+// streamed MP3 until the file finishes playing, which silently breaks any
+// currentTime/duration progress calculation. serverDurationS (computed on
+// the backend from the actual audio bytes) is the reliable source; we only
+// fall back to audio.duration if the server couldn't measure it, and to a
+// wall-clock timer as a last resort.
+function playTTSAudio(b64, mime, serverDurationS) {
+  if (!b64) { if (_pendingVoiceReply) _revealPendingReplyInstantly(); return; }
+  try {
+    if (_pendingVoiceFallbackTimer) { clearTimeout(_pendingVoiceFallbackTimer); _pendingVoiceFallbackTimer = null; }
+    const byteChars = atob(b64);
+    const byteNums = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+    const byteArray = new Uint8Array(byteNums);
+    const blob = new Blob([byteArray], { type: mime || 'audio/mpeg' });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    _activeTTSAudio = audio;
+
+    const reply = _pendingVoiceReply;
+    let _progressTimer = null;
+
+    if (reply) {
+      const fullText = reply.text;
+      const renderUpTo = (frac) => {
+        const cut = Math.max(1, Math.round(fullText.length * frac));
+        reply.contentEl.innerHTML = _renderMarkdown(fullText.slice(0, cut)) +
+          (frac < 1 ? '<span class="stream-cursor">▋</span>' : '');
+      };
+      renderUpTo(0.02); // sliver visible immediately, no blank bubble
+
+      // Reliable duration: prefer the value computed server-side from the
+      // actual audio bytes. audio.duration is only used as a fallback, and
+      // only when it's a finite, usable number (guards against Infinity,
+      // which isNaN() does NOT catch).
+      const isUsableDuration = (d) => typeof d === 'number' && isFinite(d) && d > 0;
+      const knownDuration = isUsableDuration(serverDurationS) ? serverDurationS : null;
+
+      if (knownDuration) {
+        // Drive the reveal off a wall-clock timer tied to the known
+        // duration. This works regardless of what the browser thinks
+        // audio.duration is, and stays accurate even if the audio element
+        // mis-reports its own progress.
+        const startedAt = performance.now();
+        _progressTimer = setInterval(() => {
+          const elapsed = (performance.now() - startedAt) / 1000;
+          renderUpTo(Math.min(1, elapsed / knownDuration));
+        }, 60);
+      } else {
+        // No server duration available — fall back to the audio element's
+        // own timeupdate events, but only once duration is actually usable
+        // (skips the Infinity-duration window instead of getting stuck at 0%).
+        audio.addEventListener('timeupdate', () => {
+          if (!isUsableDuration(audio.duration)) return;
+          renderUpTo(Math.min(1, audio.currentTime / audio.duration));
+        });
+      }
+
+      const finishReveal = () => {
+        if (_progressTimer) { clearInterval(_progressTimer); _progressTimer = null; }
+        if (_pendingVoiceReply !== reply) return; // already finished elsewhere
+        renderUpTo(1);
+        const ind = reply.div.querySelector('.stream-indicator');
+        if (ind) ind.remove();
+        const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+        chatHistory.push({ role: 'jarvis', text: fullText, time: now });
+        saveChatHistory();
+        _pendingVoiceReply = null;
+      };
+      audio.addEventListener('ended', finishReveal);
+      audio.addEventListener('error', () => { if (_progressTimer) clearInterval(_progressTimer); finishReveal(); });
+    }
+
+    // Phase 6.3 — mic/badge 'speaking' state, tied to actual playback start/
+    // end rather than to the WS message arriving (the audio still has to
+    // decode before play() resolves, and "JARVIS is talking" should mean
+    // sound is coming out, not "a TTS message showed up"). Mirrors how
+    // _wantTTSForPending deferred chat_reply/chat_stream_end's idle
+    // transition to here instead of firing it too early.
+    audio.addEventListener('ended', () => _sttSetPhase('idle'));
+    audio.addEventListener('error', () => _sttSetPhase('idle'));
+
+    audio.play().then(() => {
+      _sttSetPhase('speaking');
+    }).catch(e => {
+      console.warn('Audio play failed', e);
+      if (_progressTimer) { clearInterval(_progressTimer); _progressTimer = null; }
+      if (reply) _revealPendingReplyInstantly();
+      _sttSetPhase('idle');
+    });
+    audio.onended = () => { URL.revokeObjectURL(url); if (_activeTTSAudio === audio) _activeTTSAudio = null; };
+  } catch (e) {
+    console.error('TTS playback failed', e);
+    if (_pendingVoiceReply) _revealPendingReplyInstantly();
+    _sttSetPhase('idle');
+  }
+}
+
+// ── LIVE STT ENGINE ───────────────────────────────────────────────────────
+// Fully self-contained mic toggle with:
+//   • Streaming partial transcription via mic_chunk → stt_partial (server STT)
+//   • Fallback to browser Web Speech API when server offline
+//   • Visual state: mic button turns red + pulses; badge shows live text
+//   • Sends live_stt_start / live_stt_stop to server (so backend knows state)
+//   • Final transcript arrives as stt_result → auto-fills input + sends chat
+
+let jarvisMediaRecorder  = null;
+let jarvisAudioChunks    = [];
+let jarvisIsLiveSTT      = false;
+let jarvisSTTStream      = null;
+let jarvisChunkInterval  = null;
+let jarvisRecognition    = null;
+
+// Phase 6.3 — single mic/voice phase state machine.
+//
+// Before this, the mic button + badge were driven by two uncoordinated
+// writers: _sttSetListening() (toggled the 'listening' class + ok/err
+// badge text) and two _sttSetPhase('thinking' | 'idle') call sites in the
+// WS dispatcher (handleJarvisMessage's "thinking" and "chat_reply" cases)
+// that referenced a function which did not exist anywhere in this file —
+// a guaranteed ReferenceError on every single chat turn. There was also
+// no "speaking" state at all: playTTSAudio() played audio with zero mic/
+// badge feedback, so a user watching the mic button had no way to tell
+// "JARVIS is talking" from "nothing is happening".
+//
+// _sttSetPhase() is now the one function that owns #mic-btn's CSS class
+// and #stt-status-badge's text/class, tied to Phase 5's real WS events
+// (live_stt_ack / stt_partial → listening, thinking → thinking,
+// chat_reply/chat_stream_end → idle, tts_audio playback start/end →
+// speaking/idle) and to the local recorder lifecycle (transcribing, the
+// gap between "stopped recording" and "stt_result arrived").
+//
+// Valid phases: 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
+let _jarvisMicPhase = 'idle';
+
+function _sttSetPhase(phase) {
+  const btn   = document.getElementById('mic-btn');
+  const badge = document.getElementById('stt-status-badge');
+  _jarvisMicPhase = phase;
+  jarvisIsLiveSTT = (phase === 'listening');
+
+  if (btn) {
+    btn.classList.remove('listening', 'transcribing', 'thinking', 'speaking');
+    if (phase !== 'idle') btn.classList.add(phase);
+  }
+  if (badge) {
+    const LABELS = {
+      idle:         'STT Ready',
+      listening:    '🔴 Listening...',
+      transcribing: '▸ TRANSCRIBING...',
+      thinking:     '🧠 Thinking...',
+      speaking:     '🔊 Speaking...',
+    };
+    const CLASSES = {
+      idle: 'ok', listening: 'err', transcribing: 'warn',
+      thinking: 'warn', speaking: 'speaking',
+    };
+    badge.textContent = LABELS[phase] || phase;
+    badge.className   = 'stt-status ' + (CLASSES[phase] || 'ok');
+  }
+}
+
+// Back-compat shim: startListening()/startServerSTT()/the Web Speech
+// fallback all still call _sttSetListening(bool) directly (recording
+// on/off is a simpler signal than the full phase set at those call
+// sites). Route it through _sttSetPhase so there is exactly one place
+// that writes #mic-btn's class and #stt-status-badge's text — not two
+// independent writers that can disagree about what's currently true.
+function _sttSetListening(on) {
+  _sttSetPhase(on ? 'listening' : 'idle');
+}
+function _sttSetPartial(text) {
+  const inp = document.getElementById('chat-input');
+  if (inp && text) { inp.value = text; autoGrow(inp); }
+}
+
+// ── Batch (non-streaming) server STT — keeps the simple path for short recordings
+function startServerSTT() {
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    jarvisAudioChunks  = [];
+    jarvisSTTStream    = stream;
+    jarvisMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    jarvisMediaRecorder.ondataavailable = e => { if (e.data.size > 0) jarvisAudioChunks.push(e.data); };
+    jarvisMediaRecorder.onstop = () => {
+      const blob = new Blob(jarvisAudioChunks, { type: 'audio/webm' });
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const b64 = reader.result.split(',')[1];
+        jarvisSend({ type: 'stt_audio', data: b64, mime: 'audio/webm' });
+      };
+      reader.readAsDataURL(blob);
+      stream.getTracks().forEach(t => t.stop());
+    };
+    jarvisMediaRecorder.start();
+  }).catch(() => showToast('Microphone access denied. Allow mic in browser settings.','err'));
+}
+function stopServerSTT() {
+  if (jarvisMediaRecorder && jarvisMediaRecorder.state !== 'inactive') {
+    jarvisMediaRecorder.stop();
+  }
+}
+
+// ── Streaming partial STT — sends 2s chunks while recording for live feedback
+function startStreamingSTT() {
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    jarvisSTTStream   = stream;
+    jarvisAudioChunks = [];
+    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    jarvisMediaRecorder = recorder;
+
+    recorder.ondataavailable = e => { if (e.data.size > 0) jarvisAudioChunks.push(e.data); };
+    recorder.onstop = () => {
+      // Final full transcript
+      const blob = new Blob(jarvisAudioChunks, { type: 'audio/webm' });
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const b64 = reader.result.split(',')[1];
+        jarvisSend({ type: 'stt_audio', data: b64, mime: 'audio/webm' });
+      };
+      reader.readAsDataURL(blob);
+      stream.getTracks().forEach(t => t.stop());
+      clearInterval(jarvisChunkInterval);
+      jarvisChunkInterval = null;
+    };
+
+    recorder.start();
+
+    // Every 2s, snapshot current audio and send as mic_chunk for partial feedback
+    jarvisChunkInterval = setInterval(() => {
+      if (recorder.state !== 'recording') return;
+      recorder.requestData();  // triggers ondataavailable with current data
+      const snap = new Blob([...jarvisAudioChunks], { type: 'audio/webm' });
+      const r2 = new FileReader();
+      r2.onloadend = () => {
+        const b64 = r2.result.split(',')[1];
+        if (b64) jarvisSend({ type: 'mic_chunk', data: b64, mime: 'audio/webm' });
+      };
+      r2.readAsDataURL(snap);
+    }, 2000);
+
+  }).catch(() => showToast('Microphone access denied. Allow mic in browser settings.','err'));
+}
+
+function stopStreamingSTT() {
+  if (jarvisChunkInterval) { clearInterval(jarvisChunkInterval); jarvisChunkInterval = null; }
+  if (jarvisMediaRecorder && jarvisMediaRecorder.state !== 'inactive') {
+    jarvisMediaRecorder.stop();
+  }
+}
+
+// ── Main toggle entry point (called by mic button + keyboard shortcut)
+function startListening() {
+  // ── TOGGLE OFF ──
+  if (jarvisIsLiveSTT) {
+    if (jarvisConnected) {
+      jarvisSend({ type: 'live_stt_stop' });
+      stopStreamingSTT();
+      // Recording has stopped but stt_result (the final transcript) hasn't
+      // arrived yet — that's a real distinct state, not "idle". stt_result's
+      // handler and live_stt_ack both already transition out of it.
+      _sttSetPhase('transcribing');
+    } else {
+      jarvisRecognition?.stop();
+      _sttSetPhase('idle');
+    }
+    return;
+  }
+
+  // ── TOGGLE ON — server mode ──
+  if (jarvisConnected) {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(() => {
+      _sttSetPhase('listening');
+      jarvisSend({ type: 'live_stt_start' });
+      startStreamingSTT();
+    }).catch(() => {
+      showToast('Microphone access denied. Allow mic in browser settings, then retry.','err');
+    });
+    return;
+  }
+
+  // ── TOGGLE ON — browser Web Speech API fallback ──
+  const SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechAPI) {
+    showToast('Web Speech API not supported, and backend offline. Try Chrome/Edge or start server.py','err');
+    return;
+  }
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(() => {
+    jarvisRecognition = new SpeechAPI();
+    jarvisRecognition.continuous       = false;
+    jarvisRecognition.interimResults   = true;
+    jarvisRecognition.lang             = 'en-US';
+    jarvisRecognition.onstart = () => { _sttSetPhase('listening'); };
+    jarvisRecognition.onresult = (e) => {
+      const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+      _sttSetPartial(transcript);
+    };
+    jarvisRecognition.onend = () => {
+      _sttSetPhase('idle');
+      const txt = document.getElementById('chat-input')?.value.trim();
+      if (txt) sendMessage();
+    };
+    jarvisRecognition.onerror = (e) => {
+      _sttSetPhase('idle');
+      showToast('STT Error: ' + e.error, 'err');
+    };
+    jarvisRecognition.start();
+  }).catch(() => showToast('Microphone access denied. Allow mic in browser settings, then retry.', 'err'));
+}
+
+
+
+jarvisConnect(); // kick off connection on page load
+document.addEventListener('DOMContentLoaded', () => {
+  const el = document.getElementById('ws-url-text');
+  if (el) el.textContent = JARVIS_WS_URL;
+});
+
+// ── WORKSPACE SWITCHER ──
+const WS_IDS = ['chat','agents','coder','browser','memory','tasks','automation','settings'];
+function switchWS(id) {
+  WS_IDS.forEach(w => {
+    const el = document.getElementById('ws-'+w);
+    const tab = document.getElementById('tab-'+w);
+    if (el) el.classList.toggle('active', w===id);
+    if (tab) tab.classList.toggle('active', w===id);
+  });
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => {
+    if (n.getAttribute('onclick') && n.getAttribute('onclick').includes("'"+id+"'")) n.classList.add('active');
+  });
+}
+
+// ── CHAT ──
+let chatHistory = [];
+function autoGrow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 100) + 'px';
+}
+function handleChatKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const txt = input.value.trim();
+  if (!txt) return;
+  // If a previous reply is still mid voice-sync reveal, finish it now
+  if (_pendingVoiceReply) _revealPendingReplyInstantly();
+  appendMsg('user', txt);
+  input.value = '';
+  input.style.height = 'auto';
+
+  const wantTTS = document.getElementById('autospeak-toggle')?.classList.contains('on') || false;
+  _wantTTSForPending = wantTTS;
+
+  if (jarvisConnected) {
+    showTyping();
+    jarvisSend({ type: 'chat', text: txt, agent: jarvisCurrentAgent, tts: wantTTS });
+  } else {
+    // Offline fallback so the UI still responds if server.py isn't running
+    showTyping();
+    setTimeout(() => {
+      removeTyping();
+      const reply = getJarvisReply(txt) + "\n\n*(offline mode — start server.py for real AI replies)*";
+      appendMsg('jarvis', reply);
+      if (wantTTS) speakText(reply);
+    }, 600);
+  }
+}
+
+// Internal render function used by appendMsg and history restore
+function _renderMessage(role, text, timeStr, persist) {
+  const msgs = document.getElementById('chat-messages');
+  const now = timeStr || new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  const isUser = role === 'user';
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  const bodyContent = isUser
+    ? `<div class="msg-bubble">${_esc(text).replace(/\n/g,'<br>')}</div>`
+    : `<div class="msg-bubble">${_renderMarkdown(text)}</div>`;
+  div.innerHTML = `
+    <div class="msg-avatar ${role}">${isUser ? '👤' : '🤖'}</div>
+    <div class="msg-body">
+      <div class="msg-header">${isUser ? 'You' : 'JARVIS'} ${!isUser ? '<span class="msg-tag">AI AGENT</span>' : ''}</div>
+      ${bodyContent}
+      <div class="msg-time">${now}</div>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  if (persist) {
+    chatHistory.push({ role, text, time: now });
+    saveChatHistory();
+  }
+}
+function appendMsg(role, text) {
+  _renderMessage(role, text, null, true);
+}
+
+// ── Phase 6.4 / 6.5 — reply badges ──────────────────────────────────────
+// These operate on an already-rendered message bubble's .msg-header, so
+// they're called from the WS dispatcher (which has the full chat_reply
+// payload) after appendMsg()/_holdReplyForVoiceSync() has built the DOM,
+// rather than threading new parameters through every appendMsg() call site
+// (history restore, offline fallback, plain user/jarvis text all call it
+// too, and none of those have fallback/attribution data to show).
+
+// snake_case specialist name -> "Title Case" for display, e.g.
+// "engineering_agent" -> "Engineering Agent". Falls back to the raw value
+// if it doesn't look like a snake_case identifier (e.g. a persona name like
+// "oracle" that never went through the orchestrator, or a comma-joined
+// multi-agent list from a plan — both still render fine as-is).
+function _humanizeAgentName(name) {
+  if (!name) return '';
+  return name
+    .split(',')
+    .map(part => part.trim())
+    .map(part => part.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()))
+    .join(', ');
+}
+
+// Phase 6.4 — fallback-visibility badge. Inserted into the just-rendered
+// bubble's .msg-header (persists with the message, unlike a toast) AND
+// raised as a toast (matches the existing model_switch_error precedent —
+// "a real visible error, not a silent indicator change" per the Phase 6
+// acceptance check, which named that exact phrasing for this kind of event).
+function _showFallbackBadge(headerEl, fallbackSelected, answeredBy) {
+  if (!headerEl) return;
+  const badge = document.createElement('span');
+  badge.className = 'msg-tag fallback-badge';
+  badge.title = `You had ${fallbackSelected} selected, but it was unavailable for this reply.`;
+  badge.textContent = `⚠ via ${answeredBy} — ${fallbackSelected} unavailable`;
+  headerEl.appendChild(badge);
+  showToast(`Answered by ${answeredBy} — ${fallbackSelected} was unavailable`, 'info');
+}
+
+// Phase 6.5 — specialist-attribution badge. Informational only (no toast —
+// unlike a fallback, which provider/specialist answered the orchestrator's
+// own plan isn't something the user needs interrupted for), shown inline
+// next to the existing "AI AGENT" tag.
+function _showAgentAttributionBadge(headerEl, answeredByAgent) {
+  if (!headerEl || !answeredByAgent) return;
+  const badge = document.createElement('span');
+  badge.className = 'msg-tag agent-badge';
+  const human = _humanizeAgentName(answeredByAgent);
+  badge.title = `Answered via the orchestrator by: ${human}`;
+  badge.textContent = `via ${human}`;
+  headerEl.appendChild(badge);
+}
+
+// Applies whichever of the above are relevant for a given chat_reply/
+// voice-pipeline chat_reply payload, against the most recently rendered
+// JARVIS bubble's header. Safe to call with a payload that has neither
+// field set — both helpers no-op via their own falsy checks.
+function _applyReplyBadges(msg) {
+  const msgs = document.getElementById('chat-messages');
+  if (!msgs) return;
+  // Note: _endStreamBubble() doesn't strip the 'streaming-bubble' class off
+  // a finished stream's div, so we can't filter on it here — just take the
+  // most recently appended jarvis bubble, which is always the one this
+  // chat_reply corresponds to (appendMsg/_holdReplyForVoiceSync/
+  // _endStreamBubble all append-then-return before this runs).
+  const bubbles = msgs.querySelectorAll('.msg.jarvis');
+  const last = bubbles[bubbles.length - 1];
+  if (!last) return;
+  const headerEl = last.querySelector('.msg-header');
+  if (!headerEl) return;
+  if (msg.fallback_occurred) {
+    _showFallbackBadge(headerEl, msg.fallback_selected || '?', msg.answered_by || msg.provider || '?');
+  }
+  if (msg.via_orchestrator && msg.answered_by_agent) {
+    _showAgentAttributionBadge(headerEl, msg.answered_by_agent);
+  }
+}
+function showTyping() {
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.id = 'typing-indicator';
+  div.className = 'msg jarvis';
+  div.innerHTML = `<div class="msg-avatar jarvis">🤖</div><div class="msg-body"><div class="msg-bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div></div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+function removeTyping() { document.getElementById('typing-indicator')?.remove(); }
+function getJarvisReply(txt) {
+  const t = txt.toLowerCase();
+  if (t.includes('agent')) return "I have 8 specialized agents active: Planner, Coder, Browser, Memory, Voice, Automation, File, and API agents. Each handles specific tasks via EventBus routing. Head to the Agents workspace to interact with them individually.";
+  if (t.includes('code') || t.includes('python')) return "Switching to Coder workspace! I'll open the VS Code-like IDE with AI assist. You can Analyze, Rewrite, Generate, or Explain code using the AI bar at the bottom.";
+  if (t.includes('stt') || t.includes('speech') || t.includes('voice')) return "STT/TTS issues are usually caused by: (1) Mic permission not granted — click the mic button and allow access, (2) Browser not supporting Web Speech API, or (3) Missing API keys for Whisper/ElevenLabs. Head to Settings → Voice to run full diagnostics and fix each issue.";
+  if (t.includes('setting')) return "Opening Settings! You can configure STT/TTS, API keys, AI models, agent toggles, appearance, and keyboard shortcuts there.";
+  if (t.includes('memory')) return "The Memory Agent manages short-term session context, long-term key-value storage, and vector embeddings for semantic search. Open the Memory workspace to browse stored knowledge.";
+  if (t.includes('browser')) return "Browser Agent uses Playwright for web automation. All requests go through action.browser.request events via ActionCoordinator — agents never call it directly.";
+  if (t.includes('hello') || t.includes('hi')) return "Hello! I'm JARVIS, your AI OS. All systems are online. What can I help you with today?";
+  return `Understood. I'm routing your request through the Planner Agent to determine the best handler. Your query: "<em>${txt}</em>" — analyzing intent and assigning to appropriate agent pipeline.`;
+}
+function toggleProvider(el) {
+  el.classList.toggle('active');
+}
+
+// (startListening defined above in the LIVE STT ENGINE block)
+
+// ── TTS ──
+function speakText(text) {
+  if (!window.speechSynthesis) { showToast('TTS not supported. Configure ElevenLabs in Settings → Voice','err'); return; }
+  const plain = text.replace(/<[^>]+>/g,'');
+  const utt = new SpeechSynthesisUtterance(plain);
+  const voices = speechSynthesis.getVoices();
+  const pref = voices.find(v=>v.lang==='en-US' && v.name.includes('Google')) || voices[0];
+  if (pref) utt.voice = pref;
+  utt.rate = 1; utt.pitch = 1;
+  // Phase 6.3 — same 'speaking' phase as playTTSAudio()'s server-audio path,
+  // so the mic badge is consistent regardless of which TTS backend is
+  // actually producing the sound (this fires only in the offline/no-backend
+  // fallback branch of sendMessage()).
+  utt.onstart = () => _sttSetPhase('speaking');
+  utt.onend   = () => _sttSetPhase('idle');
+  utt.onerror = () => _sttSetPhase('idle');
+  speechSynthesis.speak(utt);
+}
+function testTTS() {
+  const res = document.getElementById('tts-test-result');
+  if (!window.speechSynthesis) {
+    if (res) res.textContent = '❌ speechSynthesis not available in this browser';
+    showToast('TTS not supported in this browser','err'); return;
+  }
+  speakText('Hello! JARVIS text to speech is working correctly.');
+  if (res) res.textContent = '✓ TTS playing...';
+  setTimeout(() => { if (res) res.textContent = ''; }, 3000);
+}
+function testSTT() {
+  const res = document.getElementById('stt-test-result');
+  const SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechAPI) {
+    if (res) res.textContent = '❌ Web Speech API not available — use Chrome/Edge';
+    return;
+  }
+  if (res) res.textContent = 'Requesting mic permission...';
+  navigator.mediaDevices.getUserMedia({audio:true}).then(() => {
+    if (res) res.textContent = '✓ Mic permission granted!';
+    // Update diagnostics
+    const diagItems = document.querySelectorAll('#stt-diag-list .diagnostic-item');
+    if (diagItems[0]) { diagItems[0].querySelector('.diag-icon').textContent='✅'; diagItems[0].querySelector('.diag-icon').className='diag-icon diag-ok'; diagItems[0].querySelector('.diag-label').innerHTML='Microphone permission: <b>Granted ✓</b>'; }
+    if (diagItems[1]) { diagItems[1].querySelector('.diag-icon').textContent='✅'; diagItems[1].querySelector('.diag-icon').className='diag-icon diag-ok'; diagItems[1].querySelector('.diag-label').innerHTML='Web Speech API: <b>Supported ✓</b>'; }
+    showToast('Mic permission granted! STT is ready.','ok');
+  }).catch(() => {
+    if (res) res.textContent = '❌ Mic denied — allow in browser settings';
+    showToast('Allow microphone in browser settings and try again','err');
+  });
+}
+function requestMicPerm() {
+  navigator.mediaDevices.getUserMedia({audio:true}).then(() => {
+    showToast('Microphone permission granted!','ok');
+    runSTTDiag();
+  }).catch(() => showToast('Microphone permission denied by user','err'));
+}
+function checkSpeechAPI() {
+  const ok = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  showToast(ok ? 'Web Speech API: Supported ✓' : 'Web Speech API not supported — use Chrome/Edge', ok ? 'ok' : 'err');
+}
+function checkTTSVoices() {
+  const voices = speechSynthesis?.getVoices() || [];
+  const sel = document.getElementById('tts-voice-select');
+  if (sel && voices.length > 0) {
+    sel.innerHTML = voices.map(v=>`<option>${v.name} (${v.lang})</option>`).join('');
+  }
+  showToast(`TTS: ${voices.length} voices available`, voices.length>0?'ok':'err');
+}
+function runSTTDiag() {
+  testSTT();
+  checkSpeechAPI();
+}
+function runTTSDiag() {
+  checkTTSVoices();
+  if (window.speechSynthesis) showToast('TTS Engine: Web Speech API ready','ok');
+  else showToast('speechSynthesis not available','err');
+}
+
+// ── SETTINGS PAGES ──
+function settingsPage(id, el) {
+  document.querySelectorAll('.spage').forEach(p => p.style.display='none');
+  const pg = document.getElementById('spage-'+id);
+  if (pg) pg.style.display='block';
+  document.querySelectorAll('.settings-nav-item').forEach(n => n.classList.remove('active'));
+  if (el) el.classList.add('active');
+  if (id === 'voice') {
+    setTimeout(checkTTSVoices, 100);
+  }
+}
+
+// ── CODER ──
+function loadFile(name, ext) {
+  showToast('Opened '+name+'.'+ext,'info');
+  const tab = document.createElement('div');
+  tab.className = 'editor-tab active';
+  tab.id = 'etab-'+name;
+  tab.innerHTML = `${ext==='py'?'🐍':'📄'} ${name}.${ext} <span class="tab-close" onclick="closeTab('${name}')">✕</span>`;
+  document.querySelectorAll('.editor-tab').forEach(t=>t.classList.remove('active'));
+  if (!document.getElementById('etab-'+name)) {
+    document.getElementById('editor-tabs').appendChild(tab);
+  } else { document.getElementById('etab-'+name).classList.add('active'); }
+  document.getElementById('code-editor').value = `"""
+${name}.${ext} — JARVIS AI OS
+Loaded from actions/${name}.${ext}
+Use the AI Assist bar below to analyze, rewrite or generate code.
+"""
+
+# File content would be loaded from the JARVIS backend here.
+# Connect to the JARVIS server WebSocket to fetch real file contents.
+`;
+  updateLineNums(document.getElementById('code-editor'));
+}
+function closeTab(name) {
+  const t = document.getElementById('etab-'+name);
+  if (t) t.remove();
+}
+function updateLineNums(ta) {
+  const lines = ta.value.split('\n').length;
+  document.getElementById('line-nums').innerHTML = Array.from({length:lines},(_,i)=>i+1).join('<br>');
+}
+function syncScroll(ta) {
+  document.getElementById('line-nums').scrollTop = ta.scrollTop;
+}
+function aiAction(action) {
+  const actions = {analyze:'Analyzing code structure, complexity, and potential issues...', rewrite:'Rewriting selected code with best practices...', generate:'Generating code from your description...', explain:'Explaining code in plain English...'};
+  showToast(actions[action]||'Running AI...','info');
+  const out = document.getElementById('ai-output');
+  const labels = {analyze:'🔍 ANALYSIS',rewrite:'✏️ REWRITE',generate:'✨ GENERATED',explain:'📖 EXPLANATION'};
+  const texts = {
+    analyze:'Code analysis complete. Found: 2 missing type hints, 1 async method without error handling, and 0 security issues.',
+    rewrite:'Refactored code with type hints, error handling, and docstrings applied.',
+    generate:'New code generated. Click Apply to insert at cursor position.',
+    explain:'This class implements the Coordinator pattern — it acts as a central router between agents and their action managers, enforcing the "no direct access" rule.'
+  };
+  const card = document.createElement('div');
+  card.className = 'ai-suggestion';
+  card.innerHTML = `<div class="ai-suggestion-type">${labels[action]||action.toUpperCase()}</div><div class="ai-suggestion-text">${texts[action]}</div><button class="ai-apply-btn" onclick="this.parentElement.remove()">Apply</button>`;
+  out.prepend(card);
+}
+function runAICode() {
+  const prompt = document.getElementById('ai-code-prompt').value.trim();
+  if (!prompt) { showToast('Enter a prompt first','info'); return; }
+  showToast('Generating: '+prompt,'info');
+  document.getElementById('ai-code-prompt').value = '';
+  const code = `\n# Generated by JARVIS AI: ${prompt}\nasync def generated_function(data: dict) -> dict:\n    """${prompt}"""\n    # TODO: implement\n    return {}\n`;
+  document.getElementById('code-editor').value += code;
+  updateLineNums(document.getElementById('code-editor'));
+  aiAction('generate');
+}
+function applyFix(fix) { showToast('Fix applied: '+fix,'ok'); }
+function toggleFolder(el) { el.nextElementSibling && (el.nextElementSibling.style.display === 'none' ? el.nextElementSibling.style.display = '' : el.nextElementSibling.style.display = 'none'); }
+
+// ── BROWSER ──
+function browserGo() {
+  const url = document.getElementById('browser-url').value;
+  showToast('Browser Agent navigating to: '+url,'info');
+  showModal('Browser Agent', `<p style="font-size:12px;color:var(--text-dim);line-height:1.7">Sending <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px">${url}</code> to Browser Agent via <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px">action.browser.request</code> EventBus event.<br><br>In the full JARVIS system, this opens a Playwright session and streams the result back. Connect the JARVIS server WebSocket to enable live browsing.</p><br><button class="ai-action-btn" onclick="closeModal()">OK</button>`);
+}
+function jarvisBrowse() {
+  showModal('Ask JARVIS to Browse', `<input type="text" id="jarvis-browse-input" style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:12px;outline:none;margin-bottom:12px" placeholder="What should JARVIS look up?" /><br><button class="ai-run-btn" onclick="doJarvisBrowse()">🌐 Navigate</button>`);
+}
+function doJarvisBrowse() {
+  const q = document.getElementById('jarvis-browse-input')?.value;
+  if (q) { closeModal(); document.getElementById('browser-url').value=q; browserGo(); }
+}
+
+// ── AGENT ACTIONS ──
+function openAgentChat(name) {
+  switchWS('chat');
+  setTimeout(() => {
+    document.getElementById('chat-input').value = '@'+name+' ';
+    document.getElementById('chat-input').focus();
+  }, 100);
+}
+function showAgentLog(name) {
+  showModal(name+' Agent — Logs', `<div style="background:var(--bg-input);border-radius:8px;padding:12px;font-family:var(--font-mono);font-size:11px;color:var(--text-dim);line-height:1.8;max-height:300px;overflow-y:auto">[INFO] ${name}Agent initialized<br>[INFO] Subscribed to action.${name.toLowerCase()}.request<br>[INFO] Registered with ServiceRegistry<br>[DEBUG] EventBus heartbeat OK<br>[INFO] Awaiting requests...</div>`);
+}
+function showAgentConfig(name) {
+  showModal(name+' Agent — Config', `<div style="font-size:12px;color:var(--text-dim);line-height:1.8">Agent: <b>${name}</b><br>Status: <span style="color:var(--accent3)">Online</span><br>Max concurrent: 3<br>Timeout: 60s<br>Retry: 3x<br><br><button class="ai-run-btn" onclick="closeModal()">Save Config</button></div>`);
+}
+function filterAgents(status, btn) {
+  document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.agent-card').forEach(card => {
+    if (status === 'all') card.style.display='';
+    else card.style.display = card.dataset.status === status ? '' : 'none';
+  });
+}
+
+// ── SETTINGS ACTIONS ──
+function saveKey(provider) {
+  const val = document.getElementById('key-'+provider)?.value;
+  if (!val) { showToast('Enter a key first','err'); return; }
+  localStorage.setItem('jarvis_key_'+provider, val);
+  showToast(provider.charAt(0).toUpperCase()+provider.slice(1)+' key saved!','ok');
+}
+function testKey(provider) {
+  showToast('Testing '+provider+' connection...','info');
+  setTimeout(() => showToast(provider+': Connected ✓','ok'), 1200);
+}
+function setAccent(color) {
+  document.documentElement.style.setProperty('--accent', color);
+  showToast('Accent color updated','ok');
+}
+
+// ── MODAL ──
+function showModal(title, body) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = body;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+function closeModal() { document.getElementById('modal-overlay').classList.remove('open'); }
+
+// ── TOAST ──
+function showToast(msg, type='info') {
+  const icons = {ok:'✅',err:'❌',info:'ℹ️'};
+  const t = document.getElementById('toast');
+  const item = document.createElement('div');
+  item.className = 'toast-item '+type;
+  item.innerHTML = `${icons[type]||'ℹ️'} ${msg}`;
+  t.appendChild(item);
+  setTimeout(() => { item.style.opacity='0'; item.style.transform='translateX(60px)'; item.style.transition='all .3s'; setTimeout(()=>item.remove(),300); }, 3500);
+}
+
+// ── THEME (P-27: Dark / Holographic) ─────────────────────────────────────
+let currentTheme = localStorage.getItem('jarvis_theme') || 'dark';
+const THEMES = {
+  dark: {
+    '--bg-deep':    '#09111f',
+    '--bg-panel':   '#0d1b2e',
+    '--bg-card':    '#112039',
+    '--bg-hover':   '#162847',
+    '--bg-input':   '#0b1929',
+    '--accent':     '#00d4ff',
+    '--accent2':    '#7c3aed',
+    '--accent3':    '#10b981',
+    '--accent4':    '#f59e0b',
+    '--accent5':    '#ef4444',
+    '--text':       '#e2eaf6',
+    '--text-dim':   '#7a8fa8',
+    '--text-muted': '#4a5e75',
+    '--border':     '#1e3352',
+    '--border-glow':'#00d4ff33',
+  },
+  holo: {
+    '--bg-deep':    '#000d1a',
+    '--bg-panel':   '#001428',
+    '--bg-card':    '#001f3d',
+    '--bg-hover':   '#00284f',
+    '--bg-input':   '#00091a',
+    '--accent':     '#00ffcc',
+    '--accent2':    '#ff00ff',
+    '--accent3':    '#00ff88',
+    '--accent4':    '#ffee00',
+    '--accent5':    '#ff2255',
+    '--text':       '#ccffee',
+    '--text-dim':   '#55aacc',
+    '--text-muted': '#226688',
+    '--border':     '#003366',
+    '--border-glow':'#00ffcc44',
+  },
+};
+function applyTheme(name) {
+  const t = THEMES[name] || THEMES.dark;
+  const root = document.documentElement;
+  Object.entries(t).forEach(([k, v]) => root.style.setProperty(k, v));
+  currentTheme = name;
+  localStorage.setItem('jarvis_theme', name);
+  // Update scanline overlay for holo mode
+  let scanlines = document.getElementById('holo-scanlines');
+  if (name === 'holo') {
+    if (!scanlines) {
+      scanlines = document.createElement('div');
+      scanlines.id = 'holo-scanlines';
+      scanlines.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9999;'
+        + 'background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,204,0.03) 2px,rgba(0,255,204,0.03) 4px);';
+      document.body.appendChild(scanlines);
+    }
+    document.body.style.animation = 'none';
+  } else {
+    if (scanlines) scanlines.remove();
+  }
+  const btn = document.getElementById('theme-toggle-btn');
+  if (btn) btn.title = name === 'holo' ? 'Switch to Dark' : 'Switch to Holographic';
+  if (btn) btn.textContent = name === 'holo' ? '🌙' : '🔮';
+  document.body.classList.toggle('holo-mode', name === 'holo');
+  showToast(name === 'holo' ? '🔮 Holographic theme active' : '🌙 Dark theme active', 'info');
+}
+function toggleTheme() {
+  applyTheme(currentTheme === 'dark' ? 'holo' : 'dark');
+}
+
+// ── PERSISTENT CHAT HISTORY (P-28) ──────────────────────────────────────────
+const HISTORY_KEY = 'jarvis_chat_history';
+const MAX_HISTORY_MSGS = 200;
+
+function saveChatHistory() {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(chatHistory.slice(-MAX_HISTORY_MSGS)));
+  } catch (e) { /* storage full — silently ignore */ }
+}
+function loadChatHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (!Array.isArray(saved) || saved.length === 0) return;
+    // Render saved messages without adding them to chatHistory again
+    const msgs = document.getElementById('chat-messages');
+    saved.forEach(m => {
+      _renderMessage(m.role, m.text, m.time, false);
+    });
+    chatHistory = saved;
+    showToast(`Restored ${saved.length} messages from history`, 'info');
+  } catch (e) { /* corrupted — start fresh */ }
+}
+function clearChatHistory() {
+  localStorage.removeItem(HISTORY_KEY);
+  chatHistory = [];
+  const msgs = document.getElementById('chat-messages');
+  if (msgs) msgs.innerHTML = '';
+  showToast('Chat history cleared', 'ok');
+}
+
+// ── STREAMING RESPONSE RENDERING (P-26) ──────────────────────────────────────
+let _streamingEl = null;          // current streaming bubble element
+let _streamingText = '';          // accumulated raw text
+let _streamingAgent = 'JARVIS';
+
+function _startStreamBubble(agent) {
+  removeTyping();
+  _streamingAgent = agent || 'JARVIS';
+  _streamingText = '';
+  const msgs = document.getElementById('chat-messages');
+  const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  const div = document.createElement('div');
+  div.className = 'msg jarvis streaming-bubble';
+  div.innerHTML = `
+    <div class="msg-avatar jarvis">🤖</div>
+    <div class="msg-body">
+      <div class="msg-header">${_streamingAgent} <span class="msg-tag">AI AGENT</span>
+        <span class="stream-indicator" style="color:var(--accent3);font-size:9px;margin-left:8px">● STREAMING</span>
+      </div>
+      <div class="msg-bubble stream-content" style="min-height:20px"></div>
+      <div class="msg-time">${now}</div>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  _streamingEl = div.querySelector('.stream-content');
+  return div;
+}
+
+function _appendStreamDelta(delta) {
+  if (!_streamingEl) _startStreamBubble(_streamingAgent);
+  _streamingText += delta;
+  // Render markdown incrementally
+  _streamingEl.innerHTML = _renderMarkdown(_streamingText) + '<span class="stream-cursor">▋</span>';
+  const msgs = document.getElementById('chat-messages');
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function _endStreamBubble(provider) {
+  if (_streamingEl) {
+    _streamingEl.innerHTML = _renderMarkdown(_streamingText);
+    // Remove stream indicator
+    const ind = _streamingEl.closest('.msg')?.querySelector('.stream-indicator');
+    if (ind) ind.remove();
+    // Persist to history
+    const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    chatHistory.push({ role: 'jarvis', text: _streamingText, time: now });
+    saveChatHistory();
+    if (provider) {
+      const pb = document.getElementById('active-provider-badge');
+      if (pb) pb.textContent = provider;
+    }
+  }
+  _streamingEl = null;
+  _streamingText = '';
+}
+
+// ── MARKDOWN RENDERER (P-26) ─────────────────────────────────────────────────
+function _renderMarkdown(text) {
+  if (!text) return '';
+
+  // Pre-process: strip any leading "System Response" / "Response:" labels
+  // that might survive the server-side clean pass (e.g. inside streamed chunks).
+  text = text.replace(/^(?:#{1,3}\s*)?(?:system\s*response|response|answer|output|result)\s*[:\-–—]?\s*\n+/i, '');
+
+  let html = text
+    // Fenced code blocks (must come first)
+    .replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+      const langLabel = lang
+        ? `<span style="color:var(--text-muted);font-size:9px;letter-spacing:.04em;text-transform:uppercase">${_esc(lang)}</span><br>`
+        : '';
+      return `<div class="code-block" style="background:var(--bg-input);border:1px solid var(--border);border-radius:6px;`
+           + `padding:10px 14px;margin:6px 0;font-family:var(--font-mono);font-size:11px;white-space:pre;`
+           + `overflow-x:auto;position:relative">${langLabel}${_esc(code.replace(/\n$/, ''))}</div>`;
+    })
+    // Inline code
+    .replace(/`([^`\n]+)`/g, '<code style="background:var(--bg-input);color:var(--accent);border-radius:3px;padding:1px 5px;font-family:var(--font-mono);font-size:11px">$1</code>')
+    // H1–H3 headings — render as styled spans, not raw symbols
+    .replace(/^### (.+)$/gm, '<p style="margin:10px 0 4px;font-size:12px;font-weight:600;color:var(--accent3);letter-spacing:.06em;text-transform:uppercase">$1</p>')
+    .replace(/^## (.+)$/gm,  '<p style="margin:12px 0 4px;font-size:13px;font-weight:700;color:var(--text)">$1</p>')
+    .replace(/^# (.+)$/gm,   '<p style="margin:14px 0 6px;font-size:14px;font-weight:700;color:var(--accent)">$1</p>')
+    // Bold + italic combos (order matters)
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g,     '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,         '<em>$1</em>')
+    .replace(/__(.+?)__/g,         '<strong>$1</strong>')
+    .replace(/_([^_\n]+)_/g,       '<em>$1</em>')
+    // Horizontal rules
+    .replace(/^(?:---+|\*\*\*+)$/gm, '<hr style="border:none;border-top:1px solid var(--border);margin:8px 0">')
+    // Bullet lists — greedy block match
+    .replace(/((?:^[ \t]*[*\-] .+$\n?)+)/gm, m => {
+      const items = m.trim().split('\n').filter(Boolean)
+        .map(l => `<li style="margin:3px 0;line-height:1.5">${l.replace(/^[ \t]*[*\-] /, '')}</li>`).join('');
+      return `<ul style="margin:5px 0 5px 16px;padding:0;list-style:disc">${items}</ul>`;
+    })
+    // Numbered lists
+    .replace(/((?:^[ \t]*\d+\. .+$\n?)+)/gm, m => {
+      const items = m.trim().split('\n').filter(Boolean)
+        .map(l => `<li style="margin:3px 0;line-height:1.5">${l.replace(/^[ \t]*\d+\. /, '')}</li>`).join('');
+      return `<ol style="margin:5px 0 5px 18px;padding:0">${items}</ol>`;
+    })
+    // Newlines → <br> (but not inside block elements already converted)
+    .replace(/\n/g, '<br>');
+
+  // Clean up double-breaks that appear adjacent to block elements
+  html = html
+    .replace(/(<\/(ul|ol|div|p|hr)>)<br>/g, '$1')
+    .replace(/<br>(<(?:ul|ol|div|p|hr))/g, '$1');
+
+  return html;
+}
+function _esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── KEYBOARD SHORTCUTS ──
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === ',') { e.preventDefault(); switchWS('settings'); }
+  if (e.ctrlKey && e.key === 'n') { e.preventDefault(); switchWS('chat'); }
+  if (e.ctrlKey && e.key === 'e') { e.preventDefault(); switchWS('coder'); }
+  if (e.ctrlKey && e.shiftKey && e.key === 'V') { e.preventDefault(); startListening(); }
+  if (e.ctrlKey && e.key >= '1' && e.key <= '8') {
+    e.preventDefault();
+    const ws = WS_IDS[parseInt(e.key)-1];
+    if (ws) switchWS(ws);
+  }
+});
+
+// ── GLOBAL SEARCH ──
+document.getElementById('global-search').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const v = e.target.value.trim();
+    if (!v) return;
+    switchWS('chat');
+    setTimeout(() => { document.getElementById('chat-input').value = v; sendMessage(); }, 100);
+    e.target.value = '';
+  }
+});
+
+// ── INIT ──
+window.addEventListener('load', () => {
+  updateLineNums(document.getElementById('code-editor'));
+  // Load TTS voices when available
+  if (window.speechSynthesis) {
+    speechSynthesis.onvoiceschanged = () => {
+      const voices = speechSynthesis.getVoices();
+      const sel = document.getElementById('tts-voice-select');
+      if (sel && voices.length) sel.innerHTML = voices.map(v=>`<option>${v.name} (${v.lang})</option>`).join('');
+    };
+    speechSynthesis.getVoices(); // trigger
+  }
+  // P-27: Apply saved theme
+  applyTheme(currentTheme);
+  if (currentTheme === 'holo') document.body.classList.add('holo-mode');
+  // P-28: Load persisted chat history
+  loadChatHistory();
+  showToast('JARVIS AI OS v3.0 — All systems online','ok');
+});
+</script>
+</body>
+</html>

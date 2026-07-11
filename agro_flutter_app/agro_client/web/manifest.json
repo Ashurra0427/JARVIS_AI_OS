@@ -1,0 +1,35 @@
+{
+    "name": "JARVIS AGRO — Customer",
+    "short_name": "JARVIS AGRO",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#003893",
+    "theme_color": "#003893",
+    "description": "JARVIS AGRO customer portal — job history, request a job, balance.",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

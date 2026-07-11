@@ -1,0 +1,44 @@
+# ============================================================
+# JARVIS AI OS — Knowledge Feed Configuration  (Phase 12)
+# ============================================================
+# Continuously refreshes a small set of "watch topics" into memory so
+# local-LLM answers stay current without retraining the model. See
+# memory/knowledge_feed/knowledge_feed.py for the full design and
+# PHASE12_STATUS.md for scope/limitations.
+#
+# Disabled by default — this makes outbound web requests on a timer once
+# enabled, so it's opt-in rather than something that starts silently
+# phoning out. Enable here, or toggle + manage topics from the Settings
+# panel (Settings → Knowledge Feed) once the app is running.
+# ============================================================
+
+knowledge_feed:
+  enabled: false
+
+  # How often the whole topic list is refreshed.
+  interval_s: 21600          # 6 hours
+
+  # Concepts not re-confirmed within this many days are pruned so stale
+  # info stops being surfaced as if it were current.
+  ttl_days: 30
+
+  # Bounded concurrency for the fetch step — kept low deliberately so this
+  # doesn't compete for bandwidth/CPU with voice pipeline latency on
+  # low-resource hardware (roadmap item 8).
+  max_concurrent_fetches: 2
+
+  # Max characters per stored chunk/concept.
+  chunk_chars: 1200
+
+  # Hard ceiling on one full refresh_all() cycle, regardless of how many
+  # topics are configured — protects the scheduler from a slow-network
+  # cycle blocking other periodic tasks indefinitely.
+  cycle_budget_s: 120
+
+  # Example topics (commented out — add your own via Settings, or here).
+  topics: []
+  # topics:
+  #   - query: "latest AI research papers"
+  #     max_results: 3
+  #   - query: "current weather forecasting models"
+  #     max_results: 2

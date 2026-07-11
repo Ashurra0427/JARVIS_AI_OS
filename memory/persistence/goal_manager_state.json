@@ -1,0 +1,1522 @@
+{
+  "f8b2e2b7-c726-4dce-a82d-c928bc16624a": {
+    "title": "open brave",
+    "description": "open brave",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1780996124.6284664
+  },
+  "33a48ed6-f1d3-46df-8fc0-92ec8fae6690": {
+    "title": "Execute task",
+    "description": "open brave",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": null,
+    "created_at": 1780996125.4504015
+  },
+  "98d8d80c-6dfa-49b2-8147-5ff4d1921764": {
+    "title": "play video in youtube",
+    "description": "play video in youtube",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1780996145.1829967
+  },
+  "98b5d415-49e2-46ae-83e7-cc664cc12b04": {
+    "title": "Execute task",
+    "description": "play video in youtube",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": null,
+    "created_at": 1780996145.7080855
+  },
+  "18fda46f-1304-40db-bd07-c53da8ae9c3f": {
+    "title": "how are you",
+    "description": "how are you",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1780996156.5731182
+  },
+  "e9bf0ddf-ba82-475a-9b79-8049dcb6c878": {
+    "title": "Execute task",
+    "description": "how are you",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": null,
+    "created_at": 1780996157.0542524
+  },
+  "2fee2308-94e4-46b5-8fa3-d221a4b5bf64": {
+    "title": "cd ..",
+    "description": "cd ..",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1780996165.9639168
+  },
+  "7782a415-249f-42bd-96b3-687dc769dfed": {
+    "title": "Execute task",
+    "description": "cd ..",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": null,
+    "created_at": 1780996166.4367847
+  },
+  "63a6be75-7a78-4c69-bc1a-919429d0a2b9": {
+    "title": "vld",
+    "description": "vld",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1780996169.5418093
+  },
+  "ee9ac559-5805-433a-94f6-30c01823d92a": {
+    "title": "Execute task",
+    "description": "vld",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": null,
+    "created_at": 1780996170.0858946
+  },
+  "2229b52c-d6a6-43e4-9be6-ace8e405d516": {
+    "title": "cls",
+    "description": "cls",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1780996238.7919762
+  },
+  "cf332d9f-14ec-4610-b331-9d596c854f55": {
+    "title": "hello",
+    "description": "hello",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1780997241.9114661
+  },
+  "0db45cf8-f9be-4d95-ad38-afc15e9a8be5": {
+    "title": "Execute task",
+    "description": "hello",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": null,
+    "created_at": 1780997242.7191648
+  },
+  "fcacd83d-387f-437a-8561-43e2e507f954": {
+    "title": "\\",
+    "description": "\\",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1780997324.7171853
+  },
+  "3595bdd3-43ea-4e4d-9774-64e17df1c615": {
+    "title": "Execute task",
+    "description": "\\",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": null,
+    "created_at": 1780997327.0648239
+  },
+  "bcca2dba-f3cd-436c-bea2-1f02e584c032": {
+    "title": "hello introduce yourself",
+    "description": "hello introduce yourself",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781014649.2590978
+  },
+  "4a77b115-bfdb-48ae-a18d-60780f6257bd": {
+    "title": "Execute task",
+    "description": "hello introduce yourself",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781014649.8270504
+  },
+  "fb508e4a-086e-4474-84ea-1b8426502edb": {
+    "title": "hello",
+    "description": "hello",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781015205.1237314
+  },
+  "9fb123eb-a0aa-43a1-8969-a274156fbc9d": {
+    "title": "Execute task",
+    "description": "hello",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781015209.5175016
+  },
+  "3c96a97e-58e4-4a99-b2dc-5a4abba39184": {
+    "title": "open barve",
+    "description": "open barve",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781015232.707985
+  },
+  "b9fde648-f09a-4445-aa61-6a2a2c666ab2": {
+    "title": "open notepad",
+    "description": "open notepad",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781015247.356673
+  },
+  "0f92f4be-b8c1-49a0-aca3-6e094572c5dd": {
+    "title": "Execute task",
+    "description": "open barve",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": null,
+    "created_at": 1781015248.163739
+  },
+  "07f0f33c-d2dd-4f10-afca-f1e4c55c413a": {
+    "title": "open brave",
+    "description": "open brave",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781062340.064494
+  },
+  "89941a4c-91ef-4712-8dc3-5f2ff856ab51": {
+    "title": "Execute task",
+    "description": "open brave",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "automation",
+    "created_at": 1781062340.8577673
+  },
+  "d423fb72-dbc5-4c31-9ea3-30bd9b133d7e": {
+    "title": "open notepad",
+    "description": "open notepad",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781062355.6576223
+  },
+  "b0a084b8-4f9c-473f-9acb-6ba9605ff21c": {
+    "title": "Execute task",
+    "description": "open notepad",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "automation",
+    "created_at": 1781062356.027509
+  },
+  "833df983-e653-4240-86a5-5ba55bd4b316": {
+    "title": "open youtube",
+    "description": "open youtube",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781062391.3624694
+  },
+  "b57aa149-b173-423c-8e1c-c000038128a3": {
+    "title": "Execute task",
+    "description": "open youtube",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "automation",
+    "created_at": 1781062392.0534658
+  },
+  "23484c42-a39a-48cb-a111-3077558ef89b": {
+    "title": "open youtube.com",
+    "description": "open youtube.com",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781062401.900611
+  },
+  "141cb7e7-ffb6-4764-a2d3-7ca64be4caff": {
+    "title": "Execute task",
+    "description": "open youtube.com",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "automation",
+    "created_at": 1781062402.5907223
+  },
+  "566f5136-6b06-4728-afd1-ce5c7ff4f2bb": {
+    "title": "play song",
+    "description": "play song",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781062412.0418298
+  },
+  "ddb75ce0-3513-4c22-a449-3a7496315761": {
+    "title": "Execute task",
+    "description": "play song",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "automation",
+    "created_at": 1781062412.517534
+  },
+  "821baf54-b612-4f5f-8169-ef2621f2d10e": {
+    "title": "open brave",
+    "description": "open brave",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781063148.419512
+  },
+  "0c612b1c-6881-4cd5-89e9-e0e1554c5a3e": {
+    "title": "Execute task",
+    "description": "open brave",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "automation",
+    "created_at": 1781063149.2280657
+  },
+  "cafafef5-36ca-489f-9e24-eb493acb113e": {
+    "title": "pip install silero vad",
+    "description": "pip install silero vad",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781064513.3688257
+  },
+  "5862cef8-6bec-4caf-a535-6a75f0cdd6ee": {
+    "title": "Execute task",
+    "description": "pip install silero vad",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "automation",
+    "created_at": 1781064520.9078283
+  },
+  "0a111a6f-382f-4ee1-8f46-1598b8edb6ea": {
+    "title": "pip install silero vad",
+    "description": "pip install silero vad",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781064604.2014067
+  },
+  "617a08d6-d161-4dbf-8a44-16737dd2e632": {
+    "title": "Execute task",
+    "description": "pip install silero vad",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781064606.3923545
+  },
+  "681d5495-9c46-4e53-be14-5446dd7ce2d3": {
+    "title": "pip install rnnoise-python",
+    "description": "pip install rnnoise-python",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781064620.6507123
+  },
+  "1fc3d090-d483-49e9-a657-06cae7c8e806": {
+    "title": "Execute task",
+    "description": "pip install rnnoise-python",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "engineering",
+    "created_at": 1781064631.1363895
+  },
+  "a56ffe12-4b42-44c0-9618-b1031084f531": {
+    "title": "ddefine llm",
+    "description": "ddefine llm",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781089221.571761
+  },
+  "4f9b2fd2-f191-417a-bb80-a7863b820aef": {
+    "title": "Execute task",
+    "description": "ddefine llm",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "research",
+    "created_at": 1781089222.0785081
+  },
+  "1ac8dd0e-265c-4076-8d0b-60310f1d59f7": {
+    "title": "open brave",
+    "description": "open brave",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781089240.2214668
+  },
+  "3be6937b-7f39-4b5a-9c5a-53a453626e35": {
+    "title": "Execute task",
+    "description": "open brave",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "automation",
+    "created_at": 1781089252.7319813
+  },
+  "9c8d6060-5425-49ec-be37-02a3798a3e41": {
+    "title": "define llm",
+    "description": "define llm",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781150768.806178
+  },
+  "965755fb-4ca8-4579-9d30-62005e783cac": {
+    "title": "Execute task",
+    "description": "define llm",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "research",
+    "created_at": 1781150769.3253973
+  },
+  "39c719f1-a19b-47a7-90ab-e2b2ffc1f95a": {
+    "title": "define llm",
+    "description": "define llm",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781168399.7843986
+  },
+  "3b6db974-83e8-481d-96cd-abded01e855f": {
+    "title": "Execute task",
+    "description": "define llm",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "research",
+    "created_at": 1781168400.2527397
+  },
+  "82b62ce0-d48b-49f3-9469-5af697d1ec30": {
+    "title": "]",
+    "description": "]",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781169076.9203575
+  },
+  "60f8bd66-e8f2-46cd-a9a0-590df6fffdcd": {
+    "title": "Execute task",
+    "description": "]",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781169077.4202485
+  },
+  "a3cce466-7936-4130-beed-3996e56f1b52": {
+    "title": "c\u001a\u001a\u001a",
+    "description": "c\u001a\u001a\u001a",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781169080.083039
+  },
+  "9b51ffac-34aa-467e-abfa-93ce8504371e": {
+    "title": "Execute task",
+    "description": "c\u001a\u001a\u001a",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781169080.699403
+  },
+  "2760f042-2bf8-456a-a7ea-085166b3aa83": {
+    "title": "\\",
+    "description": "\\",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781170006.8808773
+  },
+  "26e190f3-c322-48b8-a16d-475ee1a4b0cc": {
+    "title": "Execute task",
+    "description": "\\",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781170007.4577496
+  },
+  "83bf1e34-6989-431a-bb7b-86ad8f03dca7": {
+    "title": "describen llm and its properties",
+    "description": "describen llm and its properties",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781174426.1147895
+  },
+  "99d85a4b-8407-4d3c-9331-fa9dbe81d676": {
+    "title": "Execute task",
+    "description": "describen llm and its properties",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "research",
+    "created_at": 1781174426.803943
+  },
+  "b0943c12-a67e-40a2-bea6-54f33292cb2c": {
+    "title": "hello",
+    "description": "hello",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781185840.27246
+  },
+  "7b91a788-6782-4e00-9c8a-2f26f5be0971": {
+    "title": "Execute task",
+    "description": "hello",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781185847.324262
+  },
+  "40521a64-c6a7-493d-8b5e-f0ff7410c5b2": {
+    "title": "hello oracle tell me about gemini",
+    "description": "hello oracle tell me about gemini",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781186025.855833
+  },
+  "8aa55251-7f01-459d-8258-bb56ea8c4a35": {
+    "title": "Execute task",
+    "description": "hello oracle tell me about gemini",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "research",
+    "created_at": 1781186038.5057623
+  },
+  "c6d29086-0830-4014-9a4c-b9b1a633dbb6": {
+    "title": "heello\\",
+    "description": "heello\\",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781191454.6288915
+  },
+  "b87179b9-063f-43d2-b515-41808d965945": {
+    "title": "Execute task",
+    "description": "heello\\",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781191455.9470246
+  },
+  "77da6d7c-2dd1-49ef-ae5b-67051d96d819": {
+    "title": "hello introduce yourselg",
+    "description": "hello introduce yourselg",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781193917.2067711
+  },
+  "4f616625-b33c-42a1-aee8-eb7e61906927": {
+    "title": "Execute task",
+    "description": "hello introduce yourselg",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781193917.9179733
+  },
+  "a7f38c3d-e05b-491b-abd0-7ae2e65b8b64": {
+    "title": "\u0018",
+    "description": "\u0018",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197506.493119
+  },
+  "54e9d90d-9779-4197-ae6a-bf9a84711a99": {
+    "title": "Execute task",
+    "description": "\u0018",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781197507.0557523
+  },
+  "681185ee-e10d-4219-9dd1-a3fddd40bf7c": {
+    "title": "okqy",
+    "description": "okqy",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197575.1235268
+  },
+  "203b5606-f765-4d26-8b5e-594fdfd5955d": {
+    "title": "Execute task",
+    "description": "okqy",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781197575.7249546
+  },
+  "b002b903-975a-400f-b1ed-9df2a02f75e5": {
+    "title": "jdkjsd",
+    "description": "jdkjsd",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197626.725005
+  },
+  "6c77bec3-3e6a-4adf-a5fe-933642c9399e": {
+    "title": "Execute task",
+    "description": "jdkjsd",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781197627.316176
+  },
+  "5d3bf86d-5bd8-4d52-969d-9766512a3517": {
+    "title": "\u0018",
+    "description": "\u0018",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197632.3215685
+  },
+  "90283c6d-0cea-47a5-ba98-921b8caa20cd": {
+    "title": "Execute task",
+    "description": "\u0018",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781197632.6820984
+  },
+  "56b2b8e8-0d30-4145-b6f0-ddb2209881fa": {
+    "title": "jnj",
+    "description": "jnj",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197656.9572833
+  },
+  "010f7aa3-f234-4249-9888-08c27730ba8e": {
+    "title": "Execute task",
+    "description": "jnj",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "research",
+    "created_at": 1781197657.5136738
+  },
+  "347856e8-0d7a-45b7-b5a2-8dec5964738b": {
+    "title": "nokdfnskjf",
+    "description": "nokdfnskjf",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197697.6220257
+  },
+  "2e65f8de-7881-4b49-ab44-0d62d9477a20": {
+    "title": "Execute task",
+    "description": "nokdfnskjf",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "analysis",
+    "created_at": 1781197698.094489
+  },
+  "a32f8109-705d-4274-b198-fe39bd66fc43": {
+    "title": "htdj",
+    "description": "htdj",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197728.0641253
+  },
+  "95d3e12a-5b62-4108-ab25-0039417d3352": {
+    "title": "Execute task",
+    "description": "htdj",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781197728.6422524
+  },
+  "cd575441-7325-482d-b65e-d3357480eb38": {
+    "title": "jbjdbfn",
+    "description": "jbjdbfn",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197888.1974344
+  },
+  "97223f26-81c9-4412-be91-3c4e022cd775": {
+    "title": "Execute task",
+    "description": "jbjdbfn",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "analysis",
+    "created_at": 1781197888.9198215
+  },
+  "c70ce4d9-55de-4d3a-a4f8-fd50624b932f": {
+    "title": "jbdjkbd",
+    "description": "jbdjkbd",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197895.7366629
+  },
+  "4b6eff89-2975-41e8-92a2-aaef5a7aa724": {
+    "title": "Execute task",
+    "description": "jbdjkbd",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781197896.258566
+  },
+  "e6dbbdca-1911-438c-8b12-0408e7fbc58f": {
+    "title": "jnkfdj",
+    "description": "jnkfdj",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197897.456771
+  },
+  "42983ce2-eb86-460b-9236-74f7d500caa7": {
+    "title": "Execute task",
+    "description": "jnkfdj",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781197897.9995081
+  },
+  "ec8511e4-63a1-4f93-8876-14350e285622": {
+    "title": "\\ljfldsj",
+    "description": "\\ljfldsj",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197899.8169222
+  },
+  "18667174-4c2d-4139-863d-23f5d17f1ae3": {
+    "title": "Execute task",
+    "description": "\\ljfldsj",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781197900.5883822
+  },
+  "b397b74b-cc96-4516-9d03-8e6a486f7539": {
+    "title": "gdfgfd",
+    "description": "gdfgfd",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197938.3051353
+  },
+  "86b31bb4-df96-4c87-9e3f-7313e95b2b94": {
+    "title": "Execute task",
+    "description": "gdfgfd",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781197938.9513621
+  },
+  "7aa4767e-d067-4fe7-9a29-c1ce5306966a": {
+    "title": "knjfdkn",
+    "description": "knjfdkn",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781197964.0370252
+  },
+  "2c039004-5251-4f27-b9ce-d5145f99ffc6": {
+    "title": "Execute task",
+    "description": "knjfdkn",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781197964.590288
+  },
+  "786d3197-0c77-4c29-b203-d9dabff46f02": {
+    "title": "okay can you help diagnostic this file >>>#cd\u2026",
+    "description": "okay can you help diagnostic this file >>>#cd JARVIS_AI_OS/perception/speech/acknowlegment.py",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198014.934774
+  },
+  "5d68b247-2245-4161-9042-223ba6260d35": {
+    "title": "\"\"\"",
+    "description": "\"\"\"",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198015.4306912
+  },
+  "57669180-2890-4a79-8948-38b6e424d394": {
+    "title": "Execute task",
+    "description": "okay can you help diagnostic this file >>>#cd JARVIS_AI_OS/perception/speech/acknowlegment.py",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "engineering",
+    "created_at": 1781198015.666401
+  },
+  "45ceb59c-c2d1-4096-8873-83d6d35d7e8e": {
+    "title": "Execute task",
+    "description": "\"\"\"",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198015.8604684
+  },
+  "2a3b2ec6-5f13-47a6-b706-a83d3078a6ab": {
+    "title": "JARVIS AI OS \u2014 Backchannel Acknowledgement Engine",
+    "description": "JARVIS AI OS \u2014 Backchannel Acknowledgement Engine",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198016.2075586
+  },
+  "425cd909-81a0-4e54-9e67-a02b34b392c6": {
+    "title": "==================================================",
+    "description": "==================================================",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198016.7716727
+  },
+  "c803798b-0384-47ca-a480-247cdfd2f1c9": {
+    "title": "Execute task",
+    "description": "JARVIS AI OS \u2014 Backchannel Acknowledgement Engine",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781198017.042847
+  },
+  "8f66d620-4329-4050-824a-8fd62eeefe0c": {
+    "title": "Execute task",
+    "description": "==================================================",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198017.4113789
+  },
+  "f636b3af-90c6-4473-aa06-7a0672c8ce68": {
+    "title": "Plays natural, human-like filler phrases immediately after the\u2026",
+    "description": "Plays natural, human-like filler phrases immediately after the user",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198017.9338894
+  },
+  "e88a0377-a3a3-4df7-be2b-613f09f2d7ec": {
+    "title": "Execute task",
+    "description": "Plays natural, human-like filler phrases immediately after the user",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781198021.5154269
+  },
+  "0bc555a5-a6c7-44d3-b2ff-b610f0f586de": {
+    "title": "finishes speaking and while the agent is still\u2026",
+    "description": "finishes speaking and while the agent is still processing \u2014 so there",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198039.9098384
+  },
+  "2c2df7dd-5b63-4366-b3ae-53d416714e6b": {
+    "title": "is never a silent gap that makes the\u2026",
+    "description": "is never a silent gap that makes the system feel broken or unresponsive.",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198052.535776
+  },
+  "f0027953-6f9a-45cc-a942-94c019427d06": {
+    "title": "Execute task",
+    "description": "finishes speaking and while the agent is still processing \u2014 so there",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781198058.2532213
+  },
+  "fc1318a0-d04b-459b-9a93-481da3a730e2": {
+    "title": "Behaviour",
+    "description": "Behaviour",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198071.889156
+  },
+  "1fd1dd45-fdb9-45d4-ae47-4bf1ee90b4c6": {
+    "title": "---------",
+    "description": "---------",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198086.1129649
+  },
+  "f169212e-51b6-4141-9b5e-81b5a1f22d1a": {
+    "title": "Execute task",
+    "description": "is never a silent gap that makes the system feel broken or unresponsive.",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "engineering",
+    "created_at": 1781198094.159491
+  },
+  "6d748792-064d-4cfd-b79b-79dfba0128dd": {
+    "title": "Execute task",
+    "description": "Behaviour",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198116.0574586
+  },
+  "d0a9d22c-40a7-47e9-86f6-ee43f73e791d": {
+    "title": "Execute task",
+    "description": "---------",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "engineering",
+    "created_at": 1781198126.8825512
+  },
+  "6a0a42af-8630-4392-abe1-2296973c547c": {
+    "title": "1. Subscribes to VoiceEvent.LISTENING_ENDED (user stopped speaking)",
+    "description": "1. Subscribes to VoiceEvent.LISTENING_ENDED (user stopped speaking)",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198147.9856436
+  },
+  "8aad3942-7eca-4bb5-a7ac-469d26d33c31": {
+    "title": "Execute task",
+    "description": "1. Subscribes to VoiceEvent.LISTENING_ENDED (user stopped speaking)",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198148.4022663
+  },
+  "dff7327a-e111-4888-b026-d9ce110fbc6e": {
+    "title": "2. Picks a phrase that fits the *length*\u2026",
+    "description": "2. Picks a phrase that fits the *length* of the utterance:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198148.4042618
+  },
+  "bad10ad5-319e-4545-a74c-1acd4560c0e4": {
+    "title": "Execute task",
+    "description": "2. Picks a phrase that fits the *length* of the utterance:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198148.4314144
+  },
+  "d2768c98-f2b5-452c-ae20-2e5dafcb9782": {
+    "title": "short (\u22645 words) \u2192 \"Mm-hmm.\", \"Got it.\", \"Okay.\"",
+    "description": "short  (\u22645 words)  \u2192 \"Mm-hmm.\", \"Got it.\", \"Okay.\"",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198148.5661936
+  },
+  "ae7c428c-4d79-40f3-b5dc-f0acb505a957": {
+    "title": "Execute task",
+    "description": "short  (\u22645 words)  \u2192 \"Mm-hmm.\", \"Got it.\", \"Okay.\"",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198148.5705109
+  },
+  "9d0214c9-a02d-49e4-b694-65a4595468fb": {
+    "title": "medium (6-14 words) \u2192 \"Hmm, okay.\", \"Got you,\u2026",
+    "description": "medium (6-14 words) \u2192 \"Hmm, okay.\", \"Got you, sir.\", \"Understood.\"",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198148.5779798
+  },
+  "396ade24-28ac-45cc-ab9f-6195c6f74c5c": {
+    "title": "Execute task",
+    "description": "medium (6-14 words) \u2192 \"Hmm, okay.\", \"Got you, sir.\", \"Understood.\"",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198148.5779798
+  },
+  "10a29cc5-b3d4-4547-ae9a-1531e5f8b560": {
+    "title": "long (\u226515 words) \u2192 \"I'm on it, sir.\",\u2026",
+    "description": "long   (\u226515 words)  \u2192 \"I'm on it, sir.\", \"Let me look into that.\", ...",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198148.5848856
+  },
+  "2f42b93c-f886-49a0-8c0a-209da528579b": {
+    "title": "Research phase",
+    "description": "Gather information: long   (\u226515 words)  \u2192 \"I'm on it, sir.\", \"Let me look into that.\", ...",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "research",
+    "created_at": 1781198148.587415
+  },
+  "b341f6da-4767-426c-9582-7fe8d4f94d54": {
+    "title": "3. Publishes VoiceEvent.BACKCHANNEL_ACK so the UI can show\u2026",
+    "description": "3. Publishes VoiceEvent.BACKCHANNEL_ACK so the UI can show a subtle label",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198148.5919402
+  },
+  "44121528-a935-41f9-a42d-7dcc9870d418": {
+    "title": "Execute task",
+    "description": "3. Publishes VoiceEvent.BACKCHANNEL_ACK so the UI can show a subtle label",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198148.5929532
+  },
+  "5dc2bc04-476b-454d-b47d-a3700419bf66": {
+    "title": "4. Calls TTSRouter.speak() at LOW priority \u2014 agent\u2026",
+    "description": "4. Calls TTSRouter.speak() at LOW priority \u2014 agent response pre-empts it",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198148.6241674
+  },
+  "c2bb6c47-5df5-478d-a816-d68ba203290a": {
+    "title": "Execute task",
+    "description": "4. Calls TTSRouter.speak() at LOW priority \u2014 agent response pre-empts it",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198148.6241674
+  },
+  "0d2c5dd1-b63e-41f5-98ae-5c58691395ea": {
+    "title": "5. After VoiceEvent.STT_TRANSCRIPTION_FINAL the phrase has already started;",
+    "description": "5. After VoiceEvent.STT_TRANSCRIPTION_FINAL the phrase has already started;",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198148.6323736
+  },
+  "2383bd92-1fd7-40e7-a5c1-fe0a10db4855": {
+    "title": "Execute task",
+    "description": "5. After VoiceEvent.STT_TRANSCRIPTION_FINAL the phrase has already started;",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "automation",
+    "created_at": 1781198148.634374
+  },
+  "d054f59c-0c68-4cb8-9fb8-3e94c8904108": {
+    "title": "# Event handlers",
+    "description": "# Event handlers",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198187.8813102
+  },
+  "13ffbaa6-0fbe-4ce3-a0ae-c9d5ded8f754": {
+    "title": "Execute task",
+    "description": "# Event handlers",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198229.952413
+  },
+  "16e31e61-ea0b-4be1-8532-11f80e6fe990": {
+    "title": "# ------------------------------------------------------------------",
+    "description": "# ------------------------------------------------------------------",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198238.6316226
+  },
+  "c4d20111-5026-44b0-9222-b5e354f59079": {
+    "title": "def _on_pipeline_started(self, event: Event) -> None:",
+    "description": "def _on_pipeline_started(self, event: Event) -> None:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198268.9407613
+  },
+  "0de60b3b-d4e9-434d-98b7-c17690c6380c": {
+    "title": "Execute task",
+    "description": "# ------------------------------------------------------------------",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "engineering",
+    "created_at": 1781198277.7062223
+  },
+  "d088d7b2-9918-4ce9-899f-0db10d3c80b0": {
+    "title": "Execute task",
+    "description": "def _on_pipeline_started(self, event: Event) -> None:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198311.6348922
+  },
+  "f3dbced8-9b85-4e8c-8056-b15634f4b390": {
+    "title": "with self._lock:",
+    "description": "with self._lock:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198330.952722
+  },
+  "5710c31a-e9d2-4e25-9a43-f849c43b773d": {
+    "title": "Execute task",
+    "description": "with self._lock:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198330.952722
+  },
+  "75cced26-4086-4ab1-a947-7a59d58dc79c": {
+    "title": "self._pipeline_speaking = True",
+    "description": "self._pipeline_speaking = True",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198330.9573627
+  },
+  "233f4423-0eae-4d5b-a1e7-c6530aa68192": {
+    "title": "Execute task",
+    "description": "self._pipeline_speaking = True",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198330.9589086
+  },
+  "ac121e5f-5f7c-40f9-bc4c-15070687946d": {
+    "title": "def _on_pipeline_done(self, event: Event) -> None:",
+    "description": "def _on_pipeline_done(self, event: Event) -> None:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198330.9650474
+  },
+  "df2c662e-6ce0-4f84-8fdc-a1f600dbea49": {
+    "title": "Execute task",
+    "description": "def _on_pipeline_done(self, event: Event) -> None:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198330.9660459
+  },
+  "5d615e96-85be-42c7-b881-e180895b03cd": {
+    "title": "self._pipeline_speaking = False",
+    "description": "self._pipeline_speaking = False",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198330.9709675
+  },
+  "3056f069-a995-41bf-9bac-c35dad272917": {
+    "title": "Execute task",
+    "description": "self._pipeline_speaking = False",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198330.9719698
+  },
+  "fbf6f88e-d42d-40a9-b601-4a6383812427": {
+    "title": "def _on_listening_ended(self, event: Event) -> None:",
+    "description": "def _on_listening_ended(self, event: Event) -> None:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198330.9774735
+  },
+  "32850482-20a0-4ec0-9e15-f7b52be9db6b": {
+    "title": "Execute task",
+    "description": "def _on_listening_ended(self, event: Event) -> None:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198330.9786358
+  },
+  "d74b63d3-5809-4dba-82b6-13dcd0431904": {
+    "title": "\"\"\"Fire as soon as listening ends \u2014 before\u2026",
+    "description": "\"\"\"Fire as soon as listening ends \u2014 before STT result arrives.\"\"\"",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198330.982076
+  },
+  "e6eb96dc-e95c-483c-a6bf-309db2620b71": {
+    "title": "Execute task",
+    "description": "\"\"\"Fire as soon as listening ends \u2014 before STT result arrives.\"\"\"",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198330.982076
+  },
+  "0f011977-f6e9-4c44-8bee-286f3f88db9d": {
+    "title": "if not self._cfg.enabled:",
+    "description": "if not self._cfg.enabled:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198330.9858193
+  },
+  "be9c824d-1a33-472a-a0a0-bb79d54f6440": {
+    "title": "Execute task",
+    "description": "if not self._cfg.enabled:",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198330.9858193
+  },
+  "83760695-196e-4c6c-8bc1-738f178caf8c": {
+    "title": "return",
+    "description": "return",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781198330.9883351
+  },
+  "b3823993-fe41-42ff-9768-cf097c38363b": {
+    "title": "Execute task",
+    "description": "return",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "coordinator",
+    "created_at": 1781198330.9893506
+  },
+  "9d6375a1-62e2-46eb-9722-227f10e6c631": {
+    "title": "clear",
+    "description": "clear",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781200477.8897836
+  },
+  "d89c11f2-96f2-4d1d-bbdc-52f4ff7399d3": {
+    "title": "Execute task",
+    "description": "clear",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "automation",
+    "created_at": 1781200478.7189925
+  },
+  "567c89bc-b430-4224-9ea7-afcc2bc79c1c": {
+    "title": "ihinfk\u001a",
+    "description": "ihinfk\u001a",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781265438.8619735
+  },
+  "37a5a508-0b70-4acb-834c-749271dc6751": {
+    "title": "Execute task",
+    "description": "ihinfk\u001a",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "engineering",
+    "created_at": 1781265446.510351
+  },
+  "8a19c2ab-0850-4bca-9a24-e0398042c856": {
+    "title": "hello",
+    "description": "hello",
+    "status": "pending",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "console-oracle",
+    "assigned_to": null,
+    "created_at": 1781411988.663246
+  },
+  "66f54678-83f7-43ba-9cd7-9df4708b3ca7": {
+    "title": "Execute task",
+    "description": "hello",
+    "status": "active",
+    "priority": 2,
+    "depends_on": [],
+    "session_id": "",
+    "assigned_to": "communication",
+    "created_at": 1781411989.4450126
+  }
+}

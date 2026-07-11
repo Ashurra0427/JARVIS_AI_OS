@@ -1,0 +1,1832 @@
+/**
+ * sldr_mod — Prebid.js 11.5.0 compatible build
+ *
+ * ─── CHANGES FROM 10.x → 11.5.0 ────────────────────────────────────────────
+ *
+ * [1] SCHAIN — ortb2 first-party data (Prebid 10+, required in 11)
+ *     OLD: ad unit bids object had `schain: { ver, complete, nodes }` inline.
+ *     NEW: schain must live in ortb2.source.ext.schain (or ortb2.source.schain).
+ *          The per-bid schain field is ignored by adapters in Prebid 11.
+ *          Fixed in: hBGetData() — schain nodes are now set via ortb2 on tmpbjs,
+ *          not embedded inside the bid object.
+ *
+ * [2] BIDDER SETTINGS — adserverTargeting custom key (Prebid 11)
+ *     The `hb_req` / `hb_rreq` custom key written via bidderSettings.standard
+ *     .adserverTargeting still works, BUT returning a non-string from `val`
+ *     now causes a warning and may be silently dropped. The function must return
+ *     a string (or number coercible to string). Fixed: explicit String() cast.
+ *
+ * [3] EVENTS REMOVED (Prebid 11)
+ *     `addAdUnits`, `bidAccepted`, and `seatNonBid` events no longer fire.
+ *     Your code used `bidWon`, `bidResponse`, `bidRequested`, `noBid` — these
+ *     are all still valid. No change needed here.
+ *
+ * [4] MEDIA TYPE VALIDATION (Prebid 11)
+ *     Bids whose mediaType does not match the ad unit's mediaTypes are rejected.
+ *     All ad units built in hBGetData() already declare `mediaTypes: { banner: { sizes } }`.
+ *     The bid objects themselves don't set a conflicting mediaType, so no change needed.
+ *     Added auctionOptions.rejectInvalidMediaTypes = false as a safety valve in setConfig
+ *     in case a downstream bidder adapter returns an unexpected mediaType.
+ *
+ * [5] storageControl STRICT MODE (Prebid 11)
+ *     The storageControl module now defaults to strict enforcement. If included
+ *     in the Prebid build, undisclosed storage use will throw instead of warn.
+ *     `storageAllowed: true` in bidderSettings.standard is preserved (it was
+ *     already there) — this is the correct way to opt-in per Prebid 7+.
+ *
+ * [6] statusMessage REMOVED (Prebid 11.3+)
+ *     `bid.statusMessage` was removed in 11.3.0. Any code reading it will get
+ *     `undefined`. Removed one reference in the noBid handler log object.
+ *
+ * [7] enableTIDs (Prebid 10+)
+ *     `enableTIDs: true` in setConfig is still valid through 11.x. Kept as-is.
+ *
+ * [8] DNT (Prebid 11)
+ *     navigator.doNotTrack is no longer read by the core. No action needed in
+ *     publisher code.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+class sldr_mod {
+  constructor(root, adData, utils) {
+    this.root = root || document.body;
+    this.utils = utils;
+    this.log = utils.log || ((msg) => console.log(msg));
+
+    this.mainData = adData;
+    this.adData = adData.his;
+    this.adDataContent = adData.creative_content;
+    this.pid = adData.pid;
+    this.tid = adData.tid;
+    this.id = adData.AdUnitID;
+    this.header_bidding = adData.header_bidding;
+
+    this.disableLogging = this.adData.disableLogging === undefined ? true : this.adData.disableLogging;
+    this.utils.enableLog(this.disableLogging);
+    let [w, h] = (this.adData.size || "300x250").split("x");
+    this.width = Number(w);
+    this.height = Number(h);
+    this.showBranding = Boolean(this.adData.showBranding);
+    this.closeButtonSize = "medium";
+    if (
+      this.adData.closeButton_delay == undefined ||
+      this.adData.closeButton_delay < 5
+    ) {
+      this.closeButton_delay = 5000;
+    } else {
+      this.closeButton_delay = Number(this.adData.closeButton_delay) * 1000;
+    }
+    this.closeButtonHeight = this.adData.close_button !== "none" ? 25 : 0;
+    this.closeForcefully = this.adData.closeForcefully !== undefined ? Boolean(this.adData.closeForcefully) : false;
+    this.tags = this.adDataContent.SSPTag;
+    this.ifHouse = this.adData.ifHouse !== undefined ? this.adData.ifHouse : false;
+    this.startTime = null;
+    this.autoCloseAd = this.adData.autoCloseAd !== undefined ? this.adData.autoCloseAd : false;
+    this.autoCloseTimer = this.adData.autoCloseAd_Timer !== undefined ? Number(this.adData.autoCloseAd_Timer) : 5;
+    this.adLoadDelay = this.adData.ad_open_delay === undefined ? 100 : Number(this.adData.ad_open_delay) * 1000;
+    this.isAd = false;
+    this.status = true;
+    this.count = 0;
+    this.collections = [];
+    this.resultBid = [];
+    this.skipHome = Boolean(this.adData.skip_home);
+    this.position = this.adData.position;
+    this.close_buttonHeight = this.adData.close_button !== "none" ? 32 : 0;
+    this.buttonType = this.adData.buttonType === undefined ? "hideShow" : this.adData.buttonType;
+
+    this.onOpen = adData.onOpen || (() => { });
+    this.onClose = adData.onClose || (() => { });
+    this.onTimeout = adData.onTimeout || (() => { });
+
+    this.slider = null;
+    this.controlsContainer = null;
+    this.blurEl = null;
+    this.supportEl = null;
+    this.adContainer = null;
+    this.brandingEl = null;
+    this.closeBtn = null;
+    this.sliderContainer = null;
+    this.adIframe = null;
+    this.autoCloseTimeout = null;
+    this.gptObserver = null;
+    this.totalRefreshCount = null;
+    this.escHandler = this._handleEscKey.bind(this);
+    this.perbidOption = adData.header_bidding.length > 0;
+
+    this._didManualRefresh = false;
+
+    this.userFreq = this.adData.user_frequency;
+    this.eventCfg = this.adData.event_settings;
+
+    this.margin_bottom = Number(this.adData.margin_bottom);
+    this.zoomPercentage = Number(this.adData.zoom_percentage);
+    this.zIndex = Number(this.adData.z_index);
+    this.close_button = this.adData.close_button;
+    this.isClosed = false;
+
+    this._poppinsLink();
+    this._ihbCheckPoint();
+
+    if (this.skipHome) {
+      this.url = this.utils.W.location.href;
+      this.forwardSlashCount = (this.url.match(/\//g) || []).length;
+      this.thirdforwardSlashCount = this.url.split("/", 3).join("/").length;
+      if (
+        this.forwardSlashCount >= 3 &&
+        this.thirdforwardSlashCount < this.url.length - 1
+      ) {
+        // proceed
+      } else {
+        this.status = false;
+        this.log("skipped-1");
+        return;
+      }
+    }
+
+    localStorage.setItem("interactive_controls_width", this.width);
+    localStorage.setItem("interactive_controls_height", this.height);
+
+    this.fallbackTag = `<script  id='fsrv-3629' src='https://hads.tmadsrv.com/3629.js'></script>`;
+    this.refreshInterval = this.adData.refresh_interval.map(Number);
+
+    this.onOpenOrig = this.onOpen;
+    this.onCloseOrig = this.onClose;
+
+    this.log("Entry to SLDR modular");
+    this._initSessionLimits();
+
+    if (this.limitReached) {
+      this.log("Ad behavior stopped due to session limit.");
+      return;
+    }
+
+    this._buildPriorityQueue();
+
+    this._adsThisTab = Number(sessionStorage.getItem("tabAdCount") || 0);
+
+    this._cleanupExistingElements();
+
+    this._refreshScheduled = false;
+    this._lastEventType = null;
+
+    this.escHandler = this._handleEscKey.bind(this);
+    document.addEventListener("keydown", this.escHandler);
+
+    this._checkAndResetAdSession();
+
+    const first = this._nextByPriority();
+    this._lastEventType = first;
+
+    this.log(`First event by priority: ${first}`);
+    if (first === "onLoad") {
+      this._fireEvent("onLoad", "main");
+      this._scheduleNextByRefresh();
+    } else if (first === "onEvent") {
+      this._fireEvent("onEvent", "main");
+    }
+  }
+
+  _poppinsLink() {
+    this.fontLink = this.utils.D.createElement("link");
+    this.fontLink.rel = "stylesheet";
+    this.fontLink.href =
+      "https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap";
+    this.utils.D.head.appendChild(this.fontLink);
+  }
+
+  _ihbCheckPoint() {
+    this.prebidUrl = "//dsrv-prbd.tmadsrv.com/tmpbjs.js";
+
+    this.scriptExists = (url) => !!this.utils.D.querySelector(`script[src="${url}"]`);
+    if (this?.perbidOption && !this.scriptExists(this.prebidUrl)) {
+      this.pjs = document.createElement("script");
+      this.pjs.src = this.prebidUrl;
+      this.pjs.type = "text/javascript";
+      document.head.appendChild(this.pjs);
+    }
+  }
+
+  _initSessionLimits() {
+    this.limitReached = false;
+
+    const tabCfg = this.userFreq.tabSession;
+    const tabCount = Number(sessionStorage.getItem('tabAdCount') || 0);
+    const tabLimit = Number(tabCfg.tabCounts);
+
+    if (
+      tabCfg.tabSessionState &&
+      !tabCfg.tabUnlimited &&
+      tabCount >= tabLimit
+    ) {
+      this.log('Tab session ad limit reached.');
+      this.limitReached = true;
+      return;
+    }
+
+    const key = 'tmsrv_adSession';
+    const cfg = this.userFreq.adSession;
+
+    if (!cfg.adSessionState) {
+      return;
+    }
+
+    let intervalMs = Infinity;
+
+    if (cfg.adSessionAdTimeInterval) {
+      switch (cfg.adSessionAdFrequencyInterval) {
+        case 'minute': intervalMs = cfg.adSessionAdFrequencyLimit * 60_000; break;
+        case 'hour':   intervalMs = cfg.adSessionAdFrequencyLimit * 3_600_000; break;
+        case 'day':    intervalMs = cfg.adSessionAdFrequencyLimit * 86_400_000; break;
+        default:       intervalMs = Infinity;
+      }
+    }
+
+    const now = Date.now();
+    let sess = JSON.parse(localStorage.getItem(key) || 'null');
+
+    if (!sess || (now - sess.windowStart) > intervalMs) {
+      sess = { count: 0, windowStart: now };
+    }
+
+    this._globalSessionKey = key;
+    this._globalSession = sess;
+
+    if (sess.count >= cfg.adSessionAdCounts) {
+      this.log('Browser ad session limit reached.');
+      this.limitReached = true;
+      return;
+    }
+  }
+
+  _checkAndResetAdSession() {
+    const cfg = this.userFreq.adSession;
+
+    if (!cfg.adSessionState) {
+      return false;
+    }
+
+    const key = 'tmsrv_adSession';
+    let intervalMs = Infinity;
+
+    if (cfg.adSessionAdTimeInterval) {
+      switch (cfg.adSessionAdFrequencyInterval) {
+        case 'minute': intervalMs = cfg.adSessionAdFrequencyLimit * 60_000; break;
+        case 'hour':   intervalMs = cfg.adSessionAdFrequencyLimit * 3_600_000; break;
+        case 'day':    intervalMs = cfg.adSessionAdFrequencyLimit * 86_400_000; break;
+        default:       intervalMs = Infinity;
+      }
+    }
+
+    const now = Date.now();
+    let sess = JSON.parse(localStorage.getItem(key) || 'null');
+
+    if (sess && (now - sess.windowStart) > intervalMs) {
+      this.log('Ad session window expired, resetting...');
+      sess = { count: 0, windowStart: now };
+      localStorage.setItem(key, JSON.stringify(sess));
+      this._globalSession = sess;
+
+      sessionStorage.removeItem('tmsrv_priorityState');
+
+      this._buildPriorityQueue();
+
+      return true;
+    }
+
+    return false;
+  }
+
+  _buildPriorityQueue() {
+    const enabled = this.eventCfg
+      .filter((e) => e.eventState)
+      .sort((a, b) => a.eventPrority - b.eventPrority);
+
+    const isUnlimited = !this.userFreq.adSession.adSessionState;
+    const sessionLimit = isUnlimited
+      ? 1000
+      : Number(this.userFreq.adSession.adSessionAdCounts);
+    const totalWeight = enabled.reduce((sum, e) => sum + e.eventWeight, 0);
+
+    const quotas = enabled.map(
+      (e) => (sessionLimit * e.eventWeight) / totalWeight
+    );
+
+    const remaining = quotas.map(Math.floor);
+
+    let used = remaining.reduce((a, b) => a + b, 0);
+    let leftover = sessionLimit - used;
+
+    const fracs = quotas
+      .map((q, i) => ({
+        idx: i,
+        frac: q - remaining[i],
+        weight: enabled[i].eventWeight,
+      }))
+      .sort((a, b) =>
+        b.frac !== a.frac
+          ? b.frac - a.frac
+          : b.weight !== a.weight
+            ? b.weight - a.weight
+            : a.idx - b.idx
+      );
+
+    for (let k = 0; k < leftover; k++) {
+      remaining[fracs[k].idx]++;
+    }
+
+    this._prioList = enabled.map((e, i) => ({
+      type: e.eventType,
+      remaining: isUnlimited ? 1000 : remaining[i],
+      refresh: e.eventRefresh,
+      refreshCount: e.eventRefreshCount,
+    }));
+
+    try {
+      const saved = JSON.parse(
+        sessionStorage.getItem("tmsrv_priorityState") || "null"
+      );
+      if (
+        saved &&
+        Array.isArray(saved.remaining) &&
+        typeof saved.idx === "number" &&
+        saved.remaining.length === this._prioList.length
+      ) {
+        this._prioIdx = saved.idx;
+        this._prioList.forEach((slot, i) => {
+          slot.remaining = saved.remaining[i];
+        });
+      } else {
+        this._prioIdx = 0;
+      }
+    } catch {
+      this._prioIdx = 0;
+    }
+  }
+
+  _nextByPriority() {
+    const n = this._prioList.length;
+    for (let i = 0; i < n; i++) {
+      const idx = (this._prioIdx + i) % n;
+      const slot = this._prioList[idx];
+      if (slot.remaining > 0) {
+        slot.remaining--;
+        this._prioIdx = (idx + 1) % n;
+        try {
+          sessionStorage.setItem(
+            "tmsrv_priorityState",
+            JSON.stringify({
+              idx: this._prioIdx,
+              remaining: this._prioList.map((p) => p.remaining),
+            })
+          );
+        } catch (_) { }
+
+        return slot.type;
+      }
+    }
+    return null;
+  }
+
+  _fireEvent(event, type) {
+    if (type != "refresh") {
+      this._adsThisTab++;
+      sessionStorage.setItem("tabAdCount", this._adsThisTab);
+    }
+
+    if (this._globalSession && type != "refresh") {
+      this._globalSession.count++;
+      localStorage.setItem(
+        this._globalSessionKey,
+        JSON.stringify(this._globalSession)
+      );
+    }
+
+    switch (event) {
+      case "onLoad":
+        this.log("Executing onLoad behavior");
+        this.adEngine(this.position);
+        break;
+      case "onEvent":
+        this.log("Executing onEvent behavior");
+        this._attachBrowserEvents();
+        break;
+    }
+  }
+
+  _scheduleNextByRefresh() {
+    if (this._refreshScheduled) return;
+
+    const evt = this._lastEventType || "onLoad";
+    const slot = this._prioList.find((p) => p.type === evt);
+    if (!slot || !slot.refresh || slot.refreshCount <= 0) {
+      this._lastEventType = null;
+      return;
+    }
+
+    this.totalRefreshCount = slot.refreshCount;
+    this._refreshScheduled = true;
+    let idx = 1;
+    let idxDo = 0;
+
+    const doRefresh = async () => {
+      if (!this.isClosed) {
+        this.log(`Refresh #${idx + 1} of "${evt}"`);
+        this.closeUnitForRef();
+        this.adReqType = "refresh";
+        const response = await new Promise((resolve) => {
+          this.adData.callback = (res) => resolve(res);
+          this.utils.rreq(this.id, this.pid, this.adData.callback);
+        });
+
+        this.tid = response.tid;
+        this.adDataContent = response.creative_content;
+        this._fireEvent("onLoad", 'refresh');
+        idx++;
+        idxDo++;
+        scheduleOne();
+      }
+    };
+
+    const scheduleOne = () => {
+      if (idx >= slot.refreshCount) {
+        this._refreshScheduled = false;
+        this._lastEventType = null;
+        return;
+      }
+
+      const delay = this.refreshInterval[idxDo % this.refreshInterval.length] * 1000;
+      this.log(`Scheduling refresh #${idx + 1} of "${evt}" in ${delay}ms`);
+
+      setTimeout(() => {
+        if (document.hidden) {
+          const onVisible = () => {
+            if (!document.hidden) {
+              document.removeEventListener("visibilitychange", onVisible);
+              doRefresh();
+            }
+          };
+          document.addEventListener("visibilitychange", onVisible);
+        } else {
+          doRefresh();
+        }
+      }, delay);
+    };
+
+    scheduleOne();
+  }
+
+  _attachBrowserEvents() {
+    const evts = this.adData.browser_events;
+    const handler = (evt) => {
+      this.adEngine(this.position);
+      this.log(`Event triggered: ${evt.type}`, evt);
+      evts.forEach((e) => this.utils.D.removeEventListener(e, handler));
+      this._scheduleNextByRefresh();
+    };
+    evts.forEach((e) => this.utils.D.addEventListener(e, handler));
+  }
+
+  _cleanupExistingElements() {
+    const iframeElements = this.utils.D.querySelectorAll('iframe[id^="tmsrv_sldr"]');
+    if (iframeElements.length > 0) {
+      iframeElements.forEach(iframe => iframe.remove());
+
+      const intSldrElements = this.utils.D.querySelectorAll('div[id^="interactive_sldr"]');
+      const intContElements = this.utils.D.querySelectorAll('div[id^="interactive_controls"]');
+
+      intSldrElements.forEach(element => element.remove());
+      intContElements.forEach(element => element.remove());
+    }
+  }
+
+  _clearExitFallback() {
+    if (this._exitFallbackTimer) {
+      clearTimeout(this._exitFallbackTimer);
+      this._exitFallbackTimer = null;
+    }
+  }
+
+  _handleEscKey(event) {
+    if (event.key === "Escape") {
+      this.closeUnitForRef();
+    }
+  }
+
+  adEngine(position) {
+    this.log("Main entry for SLDR!");
+    this.slider = this.utils.D.createElement("div");
+    this.slider.id = "interactive_sldr";
+    Object.assign(this.slider.style, {
+      position: "fixed",
+      width: `0`,
+      height: `0`,
+      bottom: `${this.margin_bottom + 10}px`,
+      border: "1px solid #000",
+      transition: "width 0.6s ease-in-out",
+      zIndex: "999999999",
+      visibility: "hidden",
+    });
+
+    this.controlsContainer = this.utils.D.createElement("div");
+    this.controlsContainer.id = "interactive_controls";
+    Object.assign(this.controlsContainer.style, {
+      position: "fixed",
+      bottom: `${this.margin_bottom + 10}px`,
+      width: `0`,
+      height: `0`,
+      transition: "width 0.6s ease-in-out",
+      visibility: "hidden",
+      zIndex: "999999",
+    });
+
+    if (position === "left") {
+      this.slider.style.left = "10px";
+      this.controlsContainer.style.left = "10px";
+    } else {
+      this.slider.style.right = "10px";
+      this.controlsContainer.style.right = "10px";
+    }
+
+    if (this.showBranding) {
+      this.adBanner = this.utils.D.createElement("div");
+      this.adBanner.id = "tmsrvBrand";
+      Object.assign(this.adBanner.style, {
+        position: "absolute",
+        color: "#3e3e3e",
+        width: "fit-content",
+        height: "fit-content",
+        fontSize: "12px",
+        fontFamily: "arial,serif",
+        textAlign: "center",
+        cursor: "pointer",
+        zIndex: "9999",
+        top: "-20px",
+        transition: "width 0.6s ease-in-out",
+        background: this.brandingBgColor,
+      });
+      position === "left"
+        ? (this.adBanner.style.left = "0px")
+        : (this.adBanner.style.right = "0px");
+      this.slider.appendChild(this.adBanner);
+
+      this.adBannerSpan = this.utils.D.createElement("span");
+      Object.assign(this.adBannerSpan.style, {
+        padding: "2px 2px",
+        marginTop: "8px",
+        fontFamily: "poppins",
+        fontSize: "12px",
+        fontWeight: "500",
+        color: "#353434",
+      });
+
+      this.adBannerSpan.innerHTML = `${this.adData.AdsBrand} <b style="font-family: poppins; color: #fe5f00; letter-spacing: 0.5px; font-weight: 500; text-transform: uppercase; text-shadow: 1px 1px 1px rgb(0 0 0 / 30%);">${this.adData.bandName}</b>`;
+      this.adBannerSpan.addEventListener("click", (event) => {
+        event.preventDefault();
+        this.utils.W.open("https://tapmind.com/", "_blank");
+      });
+      this.adBanner.appendChild(this.adBannerSpan);
+    }
+
+    this.controls = this.utils.D.createElement("div");
+    this.controls.id = "tmsrvCloseContainer";
+    this.controlsContainer.appendChild(this.controls);
+
+    Object.assign(this.controls.style, {
+      width: `${this.close_buttonHeight}px`,
+      height: `${this.close_buttonHeight}px`,
+      position: "absolute",
+      top: "-4px",
+    });
+
+    if (this.position === "left") {
+      this.controls.style.right = "-30px";
+    } else {
+      this.controls.style.left = "-30px";
+    }
+
+    this.ahref = this.utils.D.createElement("a");
+    this.controls.appendChild(this.ahref);
+    this.ahref.addEventListener(
+      "click",
+      (event) => {
+        if (this.buttonType === "hideShow_close") {
+          this.hideShow();
+          if (this.closeForcefully) { this.closeMainContainer(); }
+        } else {
+          this.closeMainContainer();
+        }
+      },
+      false
+    );
+
+    Object.assign(this.ahref.style, {
+      width: `${this.close_buttonHeight}px`,
+      height: `${this.close_buttonHeight}px`,
+      position: "absolute",
+      display: "none",
+    });
+
+    this.closeForce = () => {
+      if (this.closeForcefully) {
+        this.isClosed = true;
+        this.slider.remove();
+        this.log(`${this.adDataContent.creativeTemplateName} SLDR-mod → closed`);
+        return;
+      }
+    };
+
+    this.closeMainContainer = () => {
+      const checkIframe = this.utils.D.getElementById(`tmsrv_sldr${this.count}`);
+      const iframeElements = this.utils.D.querySelectorAll('iframe[id^="tmsrv_sldr"]');
+      const sldrDiv = this.utils.D.getElementById("interactive_sldr");
+
+      setTimeout(() => {
+        sldrDiv.style.display = "none";
+      }, 500);
+
+      this.controlsContainer.style.visibility = "hidden";
+      checkIframe.style.visibility = "hidden";
+      sldrDiv.style.visibility = "hidden";
+      this.closeForce();
+    };
+
+    if (this.buttonType === "close" || this.ahref.style.display !== "none") {
+      this.ahref.style.display = "block";
+      this.controls.style.top = "-4px";
+      if (this.position === "left") {
+        this.controls.style.right = "-30px";
+      } else {
+        this.controls.style.left = "-30px";
+      }
+    }
+
+    this.ahrefImg = this.utils.D.createElement("img");
+    this.ahrefImg.id = "tmsrv_CloseBtn";
+    Object.assign(this.ahrefImg.style, {
+      width: `${this.close_buttonHeight}px`,
+      height: `${this.close_buttonHeight}px`,
+      cursor: "pointer",
+    });
+    this.ahrefImg.src = "https://assts.tmadsrv.com/extras/close_btn_black.png";
+    this.ahref.appendChild(this.ahrefImg);
+
+    const createHideShowContainer = () => {
+      this.hideShowContainer = this.utils.D.createElement("div");
+      this.hideShowContainer.id = "hideShowContainer";
+      this.hideShowContainer.addEventListener(
+        "click",
+        () => this.hideShow(),
+        false
+      );
+      this.controls.appendChild(this.hideShowContainer);
+      Object.assign(this.hideShowContainer.style, {
+        width: "20px",
+        height: "40px",
+        position: "absolute",
+        background: "#ebe9e9",
+        cursor: "pointer",
+        top: "5px",
+        zIndex: "999999",
+      });
+
+      if (this.position === "left") {
+        Object.assign(this.hideShowContainer.style, {
+          borderBottomRightRadius: "5px",
+          borderTopRightRadius: "5px",
+          boxShadow: "rgb(106 106 106 / 75%) 0px -1px 3px",
+          right: "10px",
+        });
+      } else {
+        Object.assign(this.hideShowContainer.style, {
+          borderBottomLeftRadius: "5px",
+          borderTopLeftRadius: "5px",
+          boxShadow: "rgb(106 106 106 / 75%) -2px 0px 5px",
+          left: "10px",
+        });
+      }
+
+      this.openCloseArrow = this.utils.D.createElement("i");
+      Object.assign(this.openCloseArrow.style, {
+        position: "absolute",
+        maxWidth: "15px",
+        maxHeight: "15px",
+        border: "solid #747373",
+        borderWidth: "0 2px 2px 0",
+        display: "inline-block",
+        padding: "3px",
+        top: "15px",
+        transform:
+          this.position === "left" ? "rotate(135deg)" : "rotate(-45deg)",
+        right: this.position === "left" ? "5px" : "8px",
+      });
+      this.hideShowContainer.appendChild(this.openCloseArrow);
+    };
+
+    if (this.buttonType === "hideShow" || this.buttonType === "hideShow_close") {
+      createHideShowContainer();
+    }
+
+    if (this.buttonType === "hideShow_close") {
+      this.ShowCloseAfterX = setTimeout(() => {
+        if (this.slider.style.display !== "none") {
+          const transform = this.openCloseArrow.style.transform;
+          const isLeft = this.position === "left";
+          const isRight = this.position === "right";
+
+          if (
+            (isLeft && transform !== "rotate(-45deg)") ||
+            (isRight && transform !== "rotate(135deg)")
+          ) {
+            this.hideShowContainer.style.display = "none";
+            this.ahref.style.display = "block";
+            clearInterval(this.ShowCloseOnClose);
+          } else {
+            this.hideShowContainer.style.display = "block";
+            this.ahref.style.display = "none";
+            clearInterval(this.ShowCloseOnClose);
+          }
+        }
+      }, this.closeButton_delay);
+    }
+
+    this.utils.D.body.appendChild(this.slider);
+    this.utils.D.body.appendChild(this.controlsContainer);
+
+    this.sliderContainer = this.utils.D.createElement("div");
+    this.sliderContainer.id = "interactive_sldrIframe";
+    this.slider.appendChild(this.sliderContainer);
+
+    if (this.adData.accidentalClick) {
+      const { D } = this.utils;
+      const existingDiv = D.getElementById('tmsrvAccidentalClick');
+      if (existingDiv) existingDiv.remove();
+
+      const accDiv = D.createElement('div');
+      accDiv.id = 'tmsrvAccidentalClick';
+      Object.assign(accDiv.style, {
+        position: 'absolute',
+        width: `${this.width}px`,
+        height: `${this.height}px`,
+        zIndex: '99999999999',
+        background: 'rgb(0 0 0 / 0%)'
+      });
+
+      this.sliderContainer.parentNode.insertBefore(accDiv, this.sliderContainer);
+      accDiv.addEventListener('click', () => {
+        console.log("event listener for accidental clicks called");
+        accDiv.style.display = 'none';
+      });
+
+      this.adData.accidentalClickDiv = accDiv;
+    }
+
+    if (this.adDataContent.creativeType !== "image") {
+      if (this.perbidOption) {
+        this.hbAdUnitImp = `tmsrv_${this.count > 0 ? 'RImp' : 'Imp'}_${this.id}`;
+        this.hbAdUnitType = this.count > 0 ? 'rreq' : 'req';
+        this.IHbIntialLoad(this.hbAdUnitImp, this.hbAdUnitType);
+      } else {
+        this.createAd(this.tags, this.pid, this.tid, this.adDataContent);
+      }
+    } else {
+      this.adData.ImgHref = this.utils.D.createElement("a");
+      this.adData.ImgHref.href = this.adDataContent.creativeLandingPageUrl;
+      this.adData.ImgHref.target = "_blank";
+
+      this.adData.ImgAss = this.utils.D.createElement("img");
+      this.adData.ImgAss.src = this.adDataContent.url;
+
+      this.adData.ImgHref.appendChild(this.adData.ImgAss);
+      this.createAd(this.adData.ImgHref.outerHTML, this.pid, this.tid, this.adDataContent);
+    }
+  }
+
+  IHbIntialLoad(adUnit, reqType) {
+    // ─── [CHANGE 1] hBGetData — schain moved to ortb2 ─────────────────────────
+    // OLD: schain was nested inside each bid object directly:
+    //   { ..., schain: { ver, complete, nodes: hbInfo.schain } }
+    // NEW (Prebid 10+ / required in 11): schain must be provided as first-party
+    //   data via tmpbjs.setConfig({ ortb2: { source: { ext: { schain: {...} } } } })
+    //   or ortb2.source.schain. The per-bid schain field is ignored by adapters
+    //   from Prebid 10 onward. We extract the unique schains here and apply them
+    //   via setBidderConfig so each bidder gets its own schain node.
+    // ──────────────────────────────────────────────────────────────────────────
+
+    this.hBGetData = (hbData, adUnitName) => {
+      this.headerBiddingParms = [];
+
+      // Collect per-bidder schain configs to apply via ortb2 after Prebid loads
+      // [CHANGE 1] Build a map of bidder → schain for later setBidderConfig call
+      this._bidderSchainMap = this._bidderSchainMap || new Map();
+
+      hbData.forEach(hbInfo => {
+        const actualFloorPrice = Number(hbInfo.floorPrice.toFixed(2));
+        const mediaTypes = { banner: { sizes: hbInfo.size } };
+
+        const floorPrice = {
+          currency: "USD",
+          schema: { fields: ["mediaType"] },
+          values: { banner: actualFloorPrice }
+        };
+
+        // [CHANGE 1] Capture schain per bidder — will be applied via ortb2
+        if (hbInfo.schain && hbInfo.schain.length > 0) {
+          this._bidderSchainMap.set(hbInfo.bidder, {
+            ver: "1.0",
+            complete: 1,
+            nodes: hbInfo.schain
+          });
+        }
+
+        const conditions = hbInfo.conditions.map(condition => ({
+          bidderName: hbInfo.buyer_name,
+          bidderID: hbInfo.buyer_id,
+          // [CHANGE 1] REMOVED: schain field from bid object — invalid in Prebid 11
+          // OLD: schain: { ver: "1.0", complete: 1, nodes: hbInfo.schain },
+          bidder: hbInfo.bidder,
+          params: condition,
+          uniqueTrackingId: `${hbInfo.buyer_id}_${Math.random().toString(36).slice(2)}_${Date.now()}`
+        }));
+
+        let setHbRequest = 1;
+        if (hbInfo.buyerRequests) {
+          if (typeof hbInfo.buyerRequests === "object") {
+            setHbRequest = hbInfo.buyerRequests[hbInfo.bidder] || 1;
+          } else if (typeof hbInfo.buyerRequests === "number") {
+            setHbRequest = hbInfo.buyerRequests;
+          }
+        }
+
+        conditions.forEach(condition => {
+          const primaryBids = [];
+
+          for (let r = 0; r < setHbRequest; r++) {
+            const trackingId = `${hbInfo.buyer_id}_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+
+            primaryBids.push({
+              code: adUnitName,
+              mediaTypes,
+              floors: floorPrice,
+              bids: [{ ...condition, uniqueTrackingId: trackingId }],
+              ortb2Imp: {
+                ext: {
+                  data: {
+                    buyer_name: hbInfo.buyer_name,
+                    buyer_id: hbInfo.buyer_id,
+                    bidderAdjustment: hbInfo.bidder_adjustment,
+                    customTrackingId: trackingId,
+                    floorPrice: actualFloorPrice
+                  }
+                }
+              }
+            });
+          }
+
+          if (hbInfo.isSecondaryFloorPriceEnabled) {
+            const secondary = Number(hbInfo.secondaryFloorPrice.toFixed(2));
+            const secondaryFloor = {
+              currency: "USD",
+              schema: { fields: ["mediaType"] },
+              values: { banner: secondary }
+            };
+
+            const secondaryTrackingId = `${hbInfo.buyer_id}_${Math.random().toString(36).slice(2)}_${Date.now()}_secondary`;
+
+            const secondaryBid = {
+              code: adUnitName,
+              mediaTypes,
+              floors: secondaryFloor,
+              bids: [{ ...condition, uniqueTrackingId: secondaryTrackingId }],
+              ortb2Imp: {
+                ext: {
+                  data: {
+                    buyer_name: hbInfo.buyer_name,
+                    buyer_id: hbInfo.buyer_id,
+                    bidderAdjustment: hbInfo.bidder_adjustment,
+                    customTrackingId: secondaryTrackingId,
+                    floorPrice: secondary,
+                    isSecondary: true
+                  }
+                }
+              }
+            };
+
+            this.headerBiddingParms.push(...primaryBids, secondaryBid);
+          } else {
+            this.headerBiddingParms.push(...primaryBids);
+          }
+        });
+      });
+
+      return this.headerBiddingParms;
+    };
+
+    this.hBGetDataForRealtime = (hbData) => {
+      this.headerBiddingParmsRt = [];
+
+      hbData.forEach(hb => {
+        this.HbInfo = hb;
+
+        if (this.HbInfo.bidder === "adagio") {
+          this.HbInfo.conditions.forEach(cond => {
+            this.headerBiddingParmsRt.push({
+              name: this.HbInfo.bidder,
+              params: cond
+            });
+          });
+        }
+      });
+
+      this.filterBidders = new Set();
+
+      return this.headerBiddingParmsRt.filter(item => {
+        if (this.filterBidders.has(item.name)) return false;
+        this.filterBidders.add(item.name);
+        return true;
+      });
+    };
+
+    this.prebidMainFun = (adUnitData, adUnitName, reqType) => {
+      adUnitData.hbDup = this.headerBiddingParms;
+      this.utils.IHBRep("req", adUnitData, () => {});
+      this.log(this.headerBiddingParms);
+
+      this.utils.W.tmpbjs = this.utils.W.tmpbjs || {};
+      const tmpbjs = this.utils.W.tmpbjs;
+      tmpbjs.que = tmpbjs.que || [];
+
+      const PREBID_TIMEOUT = 1500;
+      tmpbjs.adUnits.length = 0;
+
+      // ─── [CHANGE 2] bidderSettings.adserverTargeting val() return type ──────
+      // Prebid 11 enforces that val() must return a string (or number).
+      // Returning the raw bidResponse object (non-string) is silently dropped
+      // or triggers a warning. Changed: return String(bidResponse.bidderAdjustment)
+      // to guarantee a string value is always passed to the ad server.
+      // ─────────────────────────────────────────────────────────────────────────
+      tmpbjs.bidderSettings = {
+        standard: {
+          // [CHANGE 5] storageAllowed: true — required since Prebid 7, still needed
+          // in Prebid 11 because storageControl now defaults to STRICT enforcement.
+          // Without this, any bid adapter that writes to localStorage/cookies will
+          // throw an error (not just warn) when the storageControl module is included.
+          storageAllowed: true,
+          adserverTargeting: [
+            {
+              key: `hb_${reqType}`,
+              val: (bidResponse) => {
+                const hb = adUnitData.header_bidding.find(
+                  (x) => x.bidder === bidResponse.bidder
+                );
+                if (hb) {
+                  bidResponse.bidderAdjustment = hb.bidder_adjustment;
+                  bidResponse.buyer_name = hb.buyer_name;
+                  bidResponse.pid = adUnitData.pid;
+                  bidResponse.tid = adUnitData.tid;
+                }
+                // [CHANGE 2] Return a string, not the raw object reference.
+                // Previously: return bidResponse.bidderAdjustment  (could be number/undefined)
+                // Now: coerce to string so Prebid 11 targeting logic doesn't drop it.
+                return String(bidResponse.bidderAdjustment || "");
+              },
+            },
+          ],
+        },
+      };
+
+      this.trackingIdToBuyerMap = new Map();
+      this.bidIdToTrackingIdMap = new Map();
+
+      const headerBiddingData = adUnitData.header_bidding;
+      const enrichmentData = {
+        pid: adUnitData.pid,
+        tid: adUnitData.tid,
+        country: adUnitData.country,
+        city: adUnitData.city,
+        device: adUnitData.device,
+        os: adUnitData.os,
+        wb: adUnitData.wb,
+      };
+
+      tmpbjs.que.push(() => {
+        this.hBGetDataForRealtime(headerBiddingData);
+
+        // ─── [CHANGE 1] Apply per-bidder schain via ortb2 (Prebid 10/11) ───────
+        // Schain nodes collected in hBGetData() are now pushed into Prebid's
+        // first-party data layer via setBidderConfig, which is the only correct
+        // way to pass schain from Prebid 10 onward.
+        if (this._bidderSchainMap && this._bidderSchainMap.size > 0) {
+          this._bidderSchainMap.forEach((schainObj, bidderName) => {
+            tmpbjs.setBidderConfig({
+              bidders: [bidderName],
+              config: {
+                ortb2: {
+                  source: {
+                    ext: {
+                      schain: schainObj
+                    }
+                  }
+                }
+              }
+            });
+          });
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
+        tmpbjs.setConfig({
+          floors: {},
+          enableTIDs: true,   // still valid in Prebid 11
+          currency: { adServerCurrency: "USD" },
+          deviceAccess: true,
+          // ─── [CHANGE 4] auctionOptions — safety valve for mediaType validation ──
+          // Prebid 11 rejects bids whose mediaType doesn't match the ad unit's
+          // mediaTypes. Setting rejectInvalidMediaTypes: false prevents hard errors
+          // if a downstream adapter returns an unexpected mediaType on your banner units.
+          // Remove this if you are certain all your adapters return correct mediaTypes.
+          auctionOptions: {
+            rejectInvalidMediaTypes: false
+          },
+          // ─────────────────────────────────────────────────────────────────────
+          userSync: {
+            syncsPerBidder: 999,
+            filterSettings: { iframe: { bidders: "*", filter: "include" } },
+            userIds: [{
+              name: 'novatiq',
+              bidders: ['equativ', 'smartadserver'],
+              params: {
+                sourceid: 'Hcj'
+              }
+            }],
+            auctionDelay: 0
+          },
+          realTimeData: { dataProviders: this.headerBiddingParmsRt },
+        });
+
+        // EVENT: bidRequested — still valid in Prebid 11
+        tmpbjs.onEvent("bidRequested", (req) => {
+          req.bids.forEach((bid) => {
+            const tID = bid.uniqueTrackingId;
+            if (!tID) return;
+
+            const matchUnit = tmpbjs.adUnits.find(
+              (u) => u.code === bid.adUnitCode &&
+                u?.ortb2Imp?.ext?.data?.customTrackingId === tID
+            );
+
+            if (matchUnit) {
+              const d = matchUnit.ortb2Imp.ext.data;
+
+              this.trackingIdToBuyerMap.set(tID, {
+                buyer_name: d.buyer_name,
+                buyer_id: d.buyer_id,
+                bidderAdjustment: d.bidderAdjustment,
+                customTrackingId: d.customTrackingId,
+                requestFloorPrice: d.floorPrice,
+                isSecondary: d.isSecondary || false,
+                bidId: bid.bidId,
+              });
+
+              this.bidIdToTrackingIdMap.set(bid.bidId, tID);
+            }
+          });
+        });
+
+        // EVENT: bidResponse — still valid in Prebid 11
+        tmpbjs.onEvent("bidResponse", (bidRes) => {
+          let tID = this.bidIdToTrackingIdMap.get(bidRes.requestId);
+
+          if (!tID) {
+            const fallback = tmpbjs.adUnits.find(
+              (u) =>
+                u.code === bidRes.adUnitCode &&
+                u.bids.some((b) => b.bidder === bidRes.bidder)
+            );
+            const found = fallback?.ortb2Imp?.ext?.data?.customTrackingId;
+            if (found && this.trackingIdToBuyerMap.has(found)) tID = found;
+          }
+
+          if (tID && this.trackingIdToBuyerMap.has(tID)) {
+            Object.assign(bidRes, this.trackingIdToBuyerMap.get(tID), enrichmentData);
+          } else {
+            const hb = headerBiddingData.find(
+              (h) => h.bidder.toLowerCase() === bidRes.bidder.toLowerCase()
+            );
+            if (hb) {
+              bidRes.buyer_name = hb.buyer_name;
+              bidRes.buyer_id = hb.buyer_id;
+              bidRes.bidderAdjustment = hb.bidder_adjustment;
+            }
+            Object.assign(bidRes, enrichmentData);
+          }
+        });
+
+        // EVENT: bidWon — still valid in Prebid 11
+        tmpbjs.onEvent("bidWon", (bidWon) => {
+          const tID = this.bidIdToTrackingIdMap.get(bidWon.requestId);
+
+          if (tID && this.trackingIdToBuyerMap.has(tID)) {
+            Object.assign(bidWon, this.trackingIdToBuyerMap.get(tID), enrichmentData);
+          } else {
+            const hb = headerBiddingData.find(
+              (h) => h.bidder.toLowerCase() === bidWon.bidder.toLowerCase()
+            );
+            if (hb) {
+              bidWon.buyer_name = hb.buyer_name;
+              bidWon.buyer_id = hb.buyer_id;
+              bidWon.bidderAdjustment = hb.bidder_adjustment;
+            }
+            Object.assign(bidWon, enrichmentData);
+          }
+
+          this.utils.IHBRep("bidWon", bidWon, () => {});
+        });
+
+        // EVENT: noBid — still valid in Prebid 11
+        // ─── [CHANGE 6] statusMessage removed in Prebid 11.3.0 ───────────────
+        // bid.statusMessage no longer exists on bid objects from Prebid 11.3.0+.
+        // Removed it from the logObj to avoid logging `undefined`.
+        // ─────────────────────────────────────────────────────────────────────
+        tmpbjs.onEvent("noBid", (nb) => {
+          const hb = headerBiddingData.find(
+            (h) => h.bidder.toLowerCase() === nb.bidder.toLowerCase()
+          );
+          if (hb) {
+            const logObj = {
+              bidder: nb.bidder,
+              adUnitCode: nb.adUnitCode,
+              buyer_name: hb.buyer_name,
+              buyer_id: hb.buyer_id,
+              pid: enrichmentData.pid,
+              tid: enrichmentData.tid,
+              timestamp: Date.now(),
+              // [CHANGE 6] REMOVED: statusMessage — no longer present in Prebid 11.3+
+              // OLD: statusMessage: nb.statusMessage
+            };
+            // logObj available for analytics use if needed
+          }
+        });
+
+        // RUN PREBID
+        tmpbjs.addAdUnits(this.headerBiddingParms);
+
+        tmpbjs.requestBids({
+          timeout: PREBID_TIMEOUT,
+          bidsBackHandler: (Bid) => {
+            this.hbAdUnit = adUnitName;
+
+            if (!(this.hbAdUnit in Bid)) {
+              this.log("no bid");
+              if (adUnitData.creative_content.HbTag?.length > 0) {
+                this.isHb = true;
+                this.adDataContent.HbTag = adUnitData.creative_content.HbTag.replace(
+                  "document.getElementById(placementId).append(fallback);",
+                  "window.frameElement.callback();"
+                );
+                this.createAd(this.tags, this.pid, this.tid, this.adDataContent);
+                this.log("Hb");
+              } else {
+                this.adDataContent.HbTag = "";
+                this.createAd(this.tags, this.pid, this.tid, this.adDataContent);
+                this.log("ssp");
+              }
+              return;
+            }
+
+            this.BidRes = Bid[this.hbAdUnit].bids;
+
+            this.winners = tmpbjs.getHighestCpmBids(this.hbAdUnit);
+
+            this.IHBbidResponce = {
+              listOfWinningBids:
+                this.BidRes.length > 0
+                  ? this.BidRes
+                  : this.winners.length > 0
+                  ? [this.winners[0]]
+                  : [],
+              winningBids: this.winners[0] || null,
+            };
+
+            this.utils.IHBRep("imp", this.IHBbidResponce, () => {});
+            this.log(this.IHBbidResponce);
+
+            if (this.winners.length > 0) {
+              this.adDataContent.HbTag = this.winners[0].ad;
+              this.adDataContent.adId = this.winners[0].adId;
+              this.adDataContent.HbWinner = this.winners;
+
+              this.createAd(
+                this.tags,
+                this.pid,
+                this.tid,
+                this.adDataContent,
+                this.adDataContent.adId
+              );
+              this.log("Hb");
+            } else if (adUnitData.creative_content.HbTag?.length > 0) {
+              this.isHb = true;
+              this.adDataContent.HbTag = adUnitData.creative_content.HbTag.replace(
+                "document.getElementById(placementId).append(fallback);",
+                "window.frameElement.callback();"
+              );
+              this.createAd(this.tags, this.pid, this.tid, this.adDataContent);
+              this.log("Hb");
+            } else {
+              this.createAd(
+                adUnitData.creative_content.SSPTag,
+                this.pid,
+                this.tid,
+                this.adDataContent
+              );
+              this.log("ssp");
+            }
+          },
+        });
+      });
+    };
+
+    this.hBGetData(this.header_bidding, adUnit);
+    this.prebidMainFun(this.mainData, adUnit, reqType);
+  }
+
+  scheduleAutoClose() {
+    this.log("Auto-close timer started.");
+    const elapsed = (Date.now() - this.startTime) / 1000;
+    const timeLeft = Math.max(this.autoCloseTimer - elapsed, 0) * 1000;
+    this.log(elapsed);
+    this.log(this.autoCloseTimer);
+    this.log(timeLeft);
+    this.autoCloseTimeout = setTimeout(() => {
+      this.log("Auto-close timer reached.");
+      if (this.adData.closeRedirectURL) {
+        this.utils.W.location.href = this.adData.closeRedirectURL;
+      } else {
+        this.closeUnitForRef();
+      }
+    }, timeLeft);
+  }
+
+  createAd(tagData, pid, tid, content, adId) {
+    this.log("call has come to create Ad");
+    if (!tagData || (typeof tagData === "string" && !tagData.trim())) {
+      this.log("No tag data available for rendering the creative. Skipping render.");
+      return;
+    }
+
+    this.count++;
+    const createAdIframe = (tag) =>
+      this.utils.createIframe(this.sliderContainer, this.utils.D, this.width, this.height, tag);
+
+    if (typeof tagData !== "undefined" && content.creativeType === "highImpact") {
+      if (content.HbTag && content.HbTag.length > 0) {
+        content.HbTag = content.HbTag.replace("document.getElementById(placementId).append(fallback);", "window.frameElement.callback();");
+        this.isHb = true;
+        this.width = content.HbWinner[0].width;
+        this.height = content.HbWinner[0].height;
+        localStorage.setItem("interactive_controls_width", content.HbWinner[0].width);
+        localStorage.setItem("interactive_controls_height", content.HbWinner[0].height);
+        this.log("Load the HB tag...");
+        this.adIframe = createAdIframe(content.HbTag);
+      } else {
+        this.adIframe = createAdIframe(content.SSPTag);
+      }
+
+      this.adIframe.style.visibility = "hidden";
+
+      if (this.isHb) {
+        const startCheck = Date.now();
+        this.HbTask = setInterval(() => {
+          const diff = (Date.now() - startCheck) / 1000;
+          if (diff > this.hbWaitTime && this.isHbEmpty) {
+            this.isHbEmpty = false;
+            this.adIframe = createAdIframe(content.SSPTag);
+
+            const monitorAdIframe = setInterval(() => {
+              if (document.activeElement === this.adIframe) {
+                clearInterval(monitorAdIframe);
+
+                if (this.count > 1) {
+                  this.utils.rclick(this.id, pid, tid);
+                  this.IHBPostReq(IHBClickDataReq, 'click');
+                } else {
+                  this.utils.click(this.id, pid, tid);
+                  this.IHBPostReq(IHBClickDataReq, 'click');
+                }
+              }
+            }, 100);
+            clearInterval(this.HbTask);
+          }
+
+          if (!this.refresh) {
+            clearInterval(this.HbTask);
+          }
+        }, 1);
+      }
+    } else if (
+      typeof tagData !== "undefined" &&
+      content.creativeType === "image"
+    ) {
+      this.adIframe = createAdIframe(tagData);
+    } else {
+      this.adIframe = createAdIframe("");
+    }
+
+    const handleIframeLoad = () => {
+      this.isAd = false;
+      this.adIframe.setAttribute("width", `1`);
+      this.adIframe.setAttribute("height", `1`);
+      this.adIframe.setAttribute("id", `tmsrv_sldr${this.count}`);
+
+      if (this.count > 1) {
+        this.utils.rimp(this.id, pid, tid, this.utils.viewability(this.adData.root));
+        if (content.creativeType === 'html') {
+          const HtmlAdIframe = this.utils.createIframe(this.adIframe, this.utils.D, this.width, this.height, '');
+          HtmlAdIframe.setAttribute("src", content.url);
+          HtmlAdIframe.style.margin = '-1px';
+          this.adIframe.contentDocument.body.appendChild(HtmlAdIframe);
+        }
+
+        const monitorAdIframe = setInterval(() => {
+          if (document.activeElement === this.adIframe) {
+            clearInterval(monitorAdIframe);
+            this.utils.rclick(this.id, pid, tid);
+            if (typeof adId !== 'undefined') {
+              const IHBClickDataReq = { adId, pid, tid };
+              this.utils.IHBRep('click', IHBClickDataReq, function(adUnit) { });
+            }
+          }
+        }, 100);
+      } else {
+        this.utils.imp(this.id, pid, tid, this.utils.viewability(this.adData.root));
+        if (content.creativeType === 'html') {
+          const HtmlAdIframe = this.utils.createIframe(this.adIframe, this.utils.D, this.width, this.height, '');
+          HtmlAdIframe.setAttribute("src", content.url);
+          HtmlAdIframe.style.margin = '-1px';
+          this.adIframe.contentDocument.body.appendChild(HtmlAdIframe);
+        }
+
+        const monitorAdIframe = setInterval(() => {
+          if (document.activeElement === this.adIframe) {
+            clearInterval(monitorAdIframe);
+            this.utils.click(this.id, pid, tid);
+            if (typeof adId !== 'undefined') {
+              const IHBClickData = { adId, pid, tid };
+              this.utils.IHBRep('click', IHBClickData, function(adUnit) { });
+            }
+          }
+        }, 100);
+      }
+
+      if (this.isHb) {
+        this.log("✅ IHB ad detected");
+        this.slider.style.visibility = "visible";
+        this.adIframe.style.visibility = "visible";
+        this.controlsContainer.style.visibility = "visible";
+        this.slider.style.transform = "translateX(0)";
+        this.slider.style.width = `${this.width + 2}px`;
+        this.slider.style.height = `${this.height + 2}px`;
+        this.controlsContainer.style.width = `${this.width}px`;
+        this.controlsContainer.style.height = `${this.height}px`;
+        this.adIframe.style.width = `${this.width}px`;
+        this.adIframe.style.height = `${this.height}px`;
+
+        if (this.showBranding) {
+          this.adBanner.style.display = "block";
+        }
+
+        this.resizeAlignIntSldr(this.slider, this.zoomPercentage);
+        this.resizeAlignIntSldr(this.controlsContainer, this.zoomPercentage);
+      }
+    };
+
+    this.adIframe.onload = handleIframeLoad;
+
+    this.log(`${this.adDataContent.creativeTemplateName}(SLDR) → 1/${this.count}`);
+    this.collections.push(this);
+
+    this._setupAdMutationObserver();
+  }
+
+  _setupAdMutationObserver() {
+    this.log("mutationObserver attached...");
+    if (!this.adIframe) return;
+    try {
+      const iframeDoc = this.adIframe.contentDocument || this.adIframe.contentWindow.document;
+      const gptDiv = iframeDoc.querySelector('[id^="gpt-passback"]');
+      if (gptDiv) {
+        this.log(gptDiv);
+        this.gptObserver = new MutationObserver((mutations) => {
+          mutations.forEach((mutation, idx) => {
+            if (mutation.addedNodes.length > 0) {
+              mutation.addedNodes.forEach((node) => { });
+            }
+            if (mutation.removedNodes.length > 0) {
+              mutation.removedNodes.forEach((node) => { });
+            }
+          });
+
+          this.handleGpt(this.adIframe);
+        });
+
+        this.gptObserver.observe(gptDiv, { childList: true, subtree: true });
+      } else {
+        const adxContainer = iframeDoc.querySelector("ins.adsbygoogle");
+        this.log(adxContainer);
+        if (adxContainer) {
+          this._checkAdxStatus(adxContainer);
+
+          this.adxObserver = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+              if (
+                m.type === "attributes" &&
+                m.attributeName === "data-ad-status"
+              ) {
+                this._checkAdxStatus(adxContainer);
+              }
+            }
+          });
+          this.adxObserver.observe(adxContainer, {
+            attributes: true,
+            attributeFilter: ["data-ad-status"],
+          });
+          this.log("📡 AdX MutationObserver attached.");
+          return;
+        }
+      }
+    } catch (e) {
+      this.log("Error setting up MutationObserver: " + e);
+    }
+  }
+
+  _checkAdxStatus(adxContainer) {
+    const status = adxContainer.getAttribute("data-ad-status");
+    this.log(`AdX status changed → "${status}"`);
+    if (status === "filled" || (status === "unfilled" && this.ifHouse)) {
+      this.showAd();
+      this._clearExitFallback();
+      this.adIframe.style.visibility = "visible";
+      if (this.adxObserver) {
+        this.adxObserver.disconnect();
+        this.adxObserver = null;
+      }
+    }
+  }
+
+  handleGpt(iframe) {
+    this.log("Handling GPT iframe");
+    try {
+      const doc = iframe.contentWindow.document;
+      const gptDiv = doc.querySelector('[id^="gpt-passback"]');
+      if (!gptDiv) return;
+      const creative = gptDiv.children[0];
+      if (!creative || creative.nodeName !== "DIV") {
+        this.log("Unexpected GPT structure, forcing ad display.");
+        return;
+      }
+
+      function runChecksAndResize() {
+        const { width: w, height: h } = creative.getBoundingClientRect();
+        const isTiny = w < 10 && h < 10;
+        if (isTiny) {
+          this.log("Detected blank ad (too small), skipping resize/display.");
+          return;
+        }
+
+        if (this.adData.size === "1x1") {
+          const dims = this.utils.getDim(creative.children[0]);
+          if (!dims) return;
+          this.resizeAd(iframe, dims);
+          this.log("Resized using inner content dimensions.");
+        } else {
+          this.resizeAd(iframe, { width: this.width, height: this.height });
+          this.log("Resized using default creative dimensions.");
+        }
+      }
+
+      const imgs = Array.from(creative.querySelectorAll("img"));
+      let done = false;
+      const bailout = () => {
+        if (done) return;
+        done = true;
+        runChecksAndResize.call(this);
+      };
+
+      if (imgs.length === 0) {
+        runChecksAndResize.call(this);
+        this.isAd = true;
+        return;
+      }
+
+      const timeoutId = setTimeout(bailout, 2000);
+
+      imgs.forEach((img) => {
+        const onFinish = () => {
+          if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+            clearTimeout(timeoutId);
+            bailout();
+          }
+          img.removeEventListener("load", onFinish);
+          img.removeEventListener("error", onFinish);
+        };
+
+        if (img.complete) {
+          onFinish();
+        } else {
+          img.addEventListener("load", onFinish);
+          img.addEventListener("error", onFinish);
+        }
+      });
+    } catch (e) {
+      this.log("Error handling GPT frame: " + e);
+    }
+    this.isAd = true;
+  }
+
+  handleAdx(iframe) {
+    this.log("Handling AdX iframe...");
+    try {
+      const adEl =
+        iframe.contentWindow.document.querySelector("ins.adsbygoogle");
+      const status = adEl && adEl.getAttribute("data-ad-status");
+      if (status === "filled" || (status === "unfilled" && this.ifHouse)) {
+        this.showAd();
+        this._clearExitFallback();
+        iframe.style.visibility = "visible";
+      }
+    } catch (e) {
+      this.log("Error handling AdX frame: " + e);
+    }
+  }
+
+  resizeAd(iframe, { width, height }) {
+    this._clearExitFallback();
+
+    this.log(`Resizing ad to ${width}x${height}`);
+    this.slider.style.visibility = "visible";
+    this.adIframe.style.visibility = "visible";
+    this.controlsContainer.style.visibility = "visible";
+    this.slider.style.transform = "translateX(0)";
+    this.slider.style.width = `${width + 2}px`;
+    this.slider.style.height = `${height + 2}px`;
+    this.controlsContainer.style.width = `${width}px`;
+    this.controlsContainer.style.height = `${height}px`;
+    this.adIframe.style.width = `${width}px`;
+    this.adIframe.style.height = `${height}px`;
+
+    if (this.showBranding) {
+      this.adBanner.style.display = "block";
+    }
+
+    if (this.adData.accidentalClick) {
+      this.adData.accidentalClickDiv.style.height = `${height}px`;
+      this.adData.accidentalClickDiv.style.width = `${width}px`;
+    }
+
+    localStorage.setItem("interactive_controls_width", width);
+    localStorage.setItem("interactive_controls_height", height);
+
+    this.resizeAlignIntSldr(this.slider, this.zoomPercentage);
+    this.resizeAlignIntSldr(this.controlsContainer, this.zoomPercentage);
+  }
+
+  showCloseButton() {
+    this.disableLogging && this.log("Positioning close button...");
+    if (this.close_button === 'side_left') {
+      Object.assign(this.controls.style, { top: '25px', left: '-8px' });
+    } else if (this.close_button === 'side_right') {
+      Object.assign(this.controls.style, { top: '25px', right: '17px' });
+    }
+  }
+
+  hideShow() {
+    const storedWidth = localStorage.getItem("interactive_controls_width");
+    const storedHeight = localStorage.getItem("interactive_controls_height");
+
+    if (this.buttonType !== "hideShow_close") {
+      if (this.slider.style.display !== "none") {
+        this.slider.style.display = "none";
+        this.controlsContainer.style.width = "0";
+        this.controlsContainer.style.transition = "width 0.1s ease-in-out";
+        if (this.position === "left") {
+          this.openCloseArrow.style.transform = "rotate(-45deg)";
+          this.openCloseArrow.style.right = "10px";
+          this.hideShowContainer.style.right = "18px";
+        } else {
+          this.openCloseArrow.style.transform = "rotate(135deg)";
+          this.openCloseArrow.style.right = "5px";
+          this.hideShowContainer.style.left = "18px";
+        }
+      } else {
+        this.slider.style.display = "block";
+        this.controlsContainer.style.width = `${storedWidth}px`;
+        this.controlsContainer.style.transition = "width 0.6s ease-in-out";
+        if (this.position === "left") {
+          this.openCloseArrow.style.transform = "rotate(135deg)";
+          this.openCloseArrow.style.right = "5px";
+          this.hideShowContainer.style.right = "10px";
+        } else {
+          this.openCloseArrow.style.transform = "rotate(-45deg)";
+          this.openCloseArrow.style.right = "8px";
+          this.hideShowContainer.style.left = "10px";
+        }
+      }
+    } else {
+      if (this.slider.style.display !== "none") {
+        this.slider.style.display = "none";
+        this.controlsContainer.style.width = "0";
+        this.controlsContainer.style.transition = "width 0.1s ease-in-out";
+        if (this.position === "left") {
+          this.openCloseArrow.style.transform = "rotate(-45deg)";
+          this.openCloseArrow.style.right = "10px";
+          this.hideShowContainer.style.right = "18px";
+        } else {
+          this.openCloseArrow.style.transform = "rotate(135deg)";
+          this.openCloseArrow.style.right = "5px";
+          this.hideShowContainer.style.left = "18px";
+        }
+
+        if (
+          this.position === "left" &&
+          this.openCloseArrow.style.transform !== "rotate(-45deg)"
+        ) {
+          this.hideShowContainer.style.display = "none";
+          this.ahref.style.display = "block";
+          clearInterval(this.ShowCloseOnClose);
+        } else if (
+          this.position === "left" &&
+          this.openCloseArrow.style.transform === "rotate(-45deg)"
+        ) {
+          this.hideShowContainer.style.display = "block";
+          this.ahref.style.display = "none";
+          clearInterval(this.ShowCloseOnClose);
+        } else if (
+          this.position === "right" &&
+          this.openCloseArrow.style.transform !== "rotate(135deg)"
+        ) {
+          this.hideShowContainer.style.display = "none";
+          this.ahref.style.display = "block";
+          clearInterval(this.ShowCloseOnClose);
+        } else if (
+          this.position === "right" &&
+          this.openCloseArrow.style.transform === "rotate(135deg)"
+        ) {
+          this.hideShowContainer.style.display = "block";
+          this.ahref.style.display = "none";
+          clearInterval(this.ShowCloseOnClose);
+        }
+      } else {
+        this.slider.style.display = "block";
+        this.controlsContainer.style.width = `${storedWidth}px`;
+        this.controlsContainer.style.transition = "width 0.6s ease-in-out";
+        if (this.position === "left") {
+          this.openCloseArrow.style.transform = "rotate(135deg)";
+          this.openCloseArrow.style.right = "5px";
+          this.hideShowContainer.style.right = "10px";
+        } else {
+          this.openCloseArrow.style.transform = "rotate(-45deg)";
+          this.openCloseArrow.style.right = "8px";
+          this.hideShowContainer.style.left = "10px";
+        }
+
+        this.ShowCloseOnClose = setTimeout(() => {
+          this.hideShowContainer.style.display = "none";
+          this.ahref.style.display = "block";
+          clearInterval(this.ShowCloseOnClose);
+        }, this.closeButton_delay);
+      }
+    }
+  }
+
+  showAd() {
+    this.log("Forcing ad display...");
+    if (this.adData.hideAtTaboola) {
+      this.initTaboolaVisibilityHandler();
+    }
+    this.slider.style.visibility = "visible";
+    this.adIframe.style.visibility = "visible";
+    this.controlsContainer.style.visibility = "visible";
+    this.slider.style.transform = "translateX(0)";
+    this.slider.style.width = `${this.width + 2}px`;
+    this.slider.style.height = `${this.height + 2}px`;
+    this.controlsContainer.style.width = `${this.width}px`;
+    this.controlsContainer.style.height = `${this.height}px`;
+    this.adIframe.style.width = `${this.width}px`;
+    this.adIframe.style.height = `${this.height}px`;
+
+    if (this.showBranding) {
+      this.adBanner.style.display = "block";
+    }
+
+    if (this.adData.accidentalClick) {
+      this.adData.accidentalClickDiv.style.height = `${this.height}px`;
+      this.adData.accidentalClickDiv.style.width = `${this.width}px`;
+    }
+
+    this.resizeAlignIntSldr(this.slider, this.zoomPercentage);
+    this.resizeAlignIntSldr(this.controlsContainer, this.zoomPercentage);
+  }
+
+  resizeAlignIntSldr(element, percentage) {
+    if (percentage < 100) {
+      percentage = percentage / 100.0;
+      const scale = percentage;
+      const offsetX = 10;
+      const offsetY = 10 + this.margin_bottom;
+      if (this.position == "left") {
+        element.style.transform = `scale(${scale}) translate(-${offsetX}px, ${offsetY}px)`;
+        element.style.transformOrigin = "bottom left";
+      } else {
+        element.style.transform = `scale(${scale}) translate(${offsetX}px, ${offsetY}px)`;
+        element.style.transformOrigin = "bottom right";
+      }
+    }
+  }
+
+  closeUnitForRef() {
+    this.log("Ad is being forcefully closed.");
+    if (this.slider) this.slider.remove();
+    if (this.controlsContainer) this.controlsContainer.remove();
+
+    if (this.autoCloseTimeout) {
+      clearTimeout(this.autoCloseTimeout);
+      this.autoCloseTimeout = null;
+    }
+    if (this.gptObserver) {
+      this.gptObserver.disconnect();
+      this.gptObserver = null;
+    }
+    document.removeEventListener("keydown", this.escHandler);
+
+    if (this.task) clearInterval(this.task);
+
+    this.log("SLDR Ad closed.");
+    this.onClose();
+  }
+
+  initTaboolaVisibilityHandler() {
+    if (this.taboolaObserver) return;
+
+    const TABOOLA_SELECTOR = `[id*="${taboolaSectionID}"]`;
+
+    this.isAdVisible = (this.slider.style.display !== "none");
+
+    this.showAdTaboola = () => {
+      const isCurrentlyVisible = this.slider.style.display !== "none";
+      if (!isCurrentlyVisible) {
+        this.hideShow();
+        this.isAdVisible = true;
+      }
+    };
+
+    this.hideAdTaboola = () => {
+      const isCurrentlyVisible = this.slider.style.display !== "none";
+      if (isCurrentlyVisible) {
+        this.hideShow();
+        this.isAdVisible = false;
+      }
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        const isTaboolaVisible =
+          entry.isIntersecting &&
+          entry.target.getBoundingClientRect().height > 0;
+
+        if (isTaboolaVisible) {
+          this.hideAdTaboola();
+        } else {
+          this.showAdTaboola();
+        }
+      });
+    }, {
+      threshold: 0
+    });
+
+    this.taboolaObserver = observer;
+
+    const taboolaNow = document.querySelector(TABOOLA_SELECTOR);
+    if (taboolaNow) {
+      observer.observe(taboolaNow);
+      return;
+    }
+
+    const domWatcher = new MutationObserver((mutations) => {
+      mutations.forEach(mutation => {
+        if (mutation.type === "childList") {
+          const taboolaWidget = mutation.target.querySelector(TABOOLA_SELECTOR);
+          if (taboolaWidget) {
+            observer.observe(taboolaWidget);
+            domWatcher.disconnect();
+          }
+        }
+      });
+    });
+
+    domWatcher.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+  }
+}
+
+window.sldr_mod = sldr_mod;

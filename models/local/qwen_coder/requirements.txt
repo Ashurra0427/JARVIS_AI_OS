@@ -1,0 +1,4 @@
+optimum-intel[openvino,nncf]>=1.20.0
+transformers>=4.45.0
+accelerate
+sentencepiece

@@ -1,0 +1,55 @@
+# agro_requirements.txt
+# ─────────────────────────────────────────────────────────────────────────
+# Minimal dependency set for running agro_server.py STANDALONE — i.e.
+# WITHOUT the full JARVIS stack (server.py), which needs the much heavier
+# requirements.txt (torch, whisper, playwright, chromadb, etc).
+#
+# This file was built by tracing agro_server.py's actual imports plus
+# everything under agents/agro/*.py (database, job_manager, analytics,
+# expense_manager, excel_exporter, customer_portal) — nothing more.
+#
+# Use this when you want the lightweight backend (agro_operator +
+# agro_client both talk to it identically — verified end-to-end) on a
+# low-resource machine, instead of running the full server.py.
+#
+# Install:
+#   pip install -r agro_requirements.txt
+#
+# Run:
+#   python agro_server.py
+# ─────────────────────────────────────────────────────────────────────────
+
+# ── Web server / API ────────────────────────────────────────────────────
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0      # [standard] pulls in websockets + httptools,
+                                # needed for the /ws WebSocket endpoint
+
+# ── Database ─────────────────────────────────────────────────────────────
+aiosqlite>=0.19.0               # agents/agro/database.py, customer_portal.py
+
+# ── Excel report export ──────────────────────────────────────────────────
+# agents/agro/excel_exporter.py raises (does not gracefully degrade) if
+# this is missing — daily/monthly report export will fail without it.
+openpyxl>=3.1.0
+
+# ── Config ────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0            # loads .env (AGRO_PORT, AGRO_TTS, etc.)
+
+# ── Text-to-speech (bilingual Nepali/English job confirmations) ─────────
+# Both are OPTIONAL at runtime — agro_server.py catches ImportError and
+# logs a warning, falling back to silent/no-TTS rather than crashing
+# (verified live: removing these does not break log_job/issue_pin/etc).
+# Install edge-tts if you want spoken job confirmations at all; kokoro is
+# only a secondary fallback if edge-tts's network call fails.
+edge-tts>=6.1.0
+# kokoro-onnx>=0.2.0            # uncomment + also: pip install soundfile numpy
+# soundfile
+# numpy
+
+# ── Pin issuance hashing (stdlib only — no extra package needed) ────────
+# hashlib / secrets used by customer_portal.py are Python standard library.
+
+# ── Nightly DB backup off-device push (OPTIONAL) ─────────────────────────
+# agents/agro/backup_manager.py only imports httpx if AGRO_BACKUP_WEBHOOK_URL
+# is actually set — leave commented out if you're only using local rotation.
+# httpx>=0.27.0

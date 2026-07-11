@@ -1,0 +1,561 @@
+"""
+JARVIS AI OS — Terminal Actions
+==================================
+Low-level terminal execution layer.
+
+Architecture rules:
+  - This is a pure execution layer; NO permission checks are performed here.
+  - Permission validation is the responsibility of PermissionManager,
+    PolicyEngine, and ActionGuard, which must gate calls to this layer.
+  - Results are structured TerminalResult dataclasses.
+  - Process tracking is maintained for cancellation support.
+
+Responsibilities:
+  - execute_command()
+  - execute_powershell()
+  - execute_cmd()
+  - stream_output()
+  - cancel_process()
+  - kill_process()
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import AsyncIterator
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+DEFAULT_TIMEOUT_SECONDS: float = 30.0
+MAX_OUTPUT_BYTES: int = 10 * 1024 * 1024  # 10 MB cap per stream
+_KILL_GRACE_SECONDS: float = 2.0
+
+
+# ---------------------------------------------------------------------------
+# Result model
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TerminalResult:
+    """Structured result returned by every TerminalActions operation."""
+
+    success: bool
+    command: str
+    stdout: str = ""
+    stderr: str = ""
+    return_code: int = -1
+    duration_ms: float = 0.0
+    pid: int | None = None
+    timed_out: bool = False
+    cancelled: bool = False
+    error: str = ""
+
+    def as_dict(self) -> dict:
+        return {
+            "success": self.success,
+            "command": self.command,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "return_code": self.return_code,
+            "duration_ms": round(self.duration_ms, 1),
+            "pid": self.pid,
+            "timed_out": self.timed_out,
+            "cancelled": self.cancelled,
+            "error": self.error,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Internal process handle
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _ProcessHandle:
+    request_id: str
+    command: str
+    process: asyncio.subprocess.Process
+    started_at: float = field(default_factory=time.monotonic)
+
+    @property
+    def pid(self) -> int | None:
+        return self.process.pid
+
+    async def terminate_graceful(self) -> None:
+        """SIGTERM → wait grace period → SIGKILL."""
+        try:
+            self.process.terminate()
+            await asyncio.sleep(_KILL_GRACE_SECONDS)
+            if self.process.returncode is None:
+                self.process.kill()
+        except ProcessLookupError:
+            pass
+
+    async def kill_immediate(self) -> None:
+        """SIGKILL / TerminateProcess with no grace period."""
+        try:
+            self.process.kill()
+        except ProcessLookupError:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# TerminalActions
+# ---------------------------------------------------------------------------
+
+
+class TerminalActions:
+    """
+    Low-level async terminal execution layer.
+
+    This class provides raw process execution capabilities.  It maintains a
+    registry of active processes to support cancellation and forced termination.
+
+    Security note:
+        This class does NOT validate or restrict commands in any way.
+        All security decisions (allowed commands, risk scoring, blocklists)
+        are the responsibility of the calling stack:
+            PermissionManager → PolicyEngine → ActionGuard → TerminalManager
+                                                              → TerminalActions
+    """
+
+    def __init__(self) -> None:
+        self._active: dict[str, _ProcessHandle] = {}
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def execute_command(
+        self,
+        command: str,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        working_dir: str | None = None,
+        env: dict[str, str] | None = None,
+        request_id: str | None = None,
+    ) -> TerminalResult:
+        """
+        Execute a shell command using the platform default shell.
+
+        On Windows, this delegates to cmd.exe /C.
+        On POSIX, this delegates to /bin/sh -c.
+
+        Args:
+            command:     Command string to run.
+            timeout:     Seconds before the process is killed; 0 = no limit.
+            working_dir: Override process working directory.
+            env:         Merged over os.environ for the child process.
+            request_id:  Caller-supplied correlation ID.
+
+        Returns:
+            TerminalResult — always populated, never raises.
+        """
+        return await self._run(
+            command,
+            shell=True,
+            timeout=timeout,
+            working_dir=working_dir,
+            env=env,
+            request_id=request_id,
+        )
+
+    async def execute_powershell(
+        self,
+        script: str,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        working_dir: str | None = None,
+        env: dict[str, str] | None = None,
+        request_id: str | None = None,
+        execution_policy: str = "Bypass",
+    ) -> TerminalResult:
+        """
+        Execute a PowerShell script block.
+
+        Args:
+            script:           PowerShell script content or single command.
+            timeout:          Seconds before the process is killed.
+            working_dir:      Working directory override.
+            env:              Environment variable overrides.
+            request_id:       Caller-supplied correlation ID.
+            execution_policy: PowerShell ExecutionPolicy flag (default: Bypass).
+
+        Returns:
+            TerminalResult — always populated, never raises.
+        """
+        command = (
+            f"powershell.exe -NoProfile -NonInteractive "
+            f'-ExecutionPolicy {execution_policy} -Command "{_escape_ps(script)}"'
+        )
+        return await self._run(
+            command,
+            shell=False,
+            timeout=timeout,
+            working_dir=working_dir,
+            env=env,
+            request_id=request_id,
+            display_command=f"powershell: {script[:120]}",
+        )
+
+    async def execute_cmd(
+        self,
+        command: str,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        working_dir: str | None = None,
+        env: dict[str, str] | None = None,
+        request_id: str | None = None,
+    ) -> TerminalResult:
+        """
+        Execute a command explicitly through cmd.exe /C.
+
+        Useful when the caller needs Windows cmd built-ins (dir, echo, etc.)
+        without relying on implicit shell detection.
+
+        Args:
+            command:     Command string to pass to cmd.exe.
+            timeout:     Seconds before the process is killed.
+            working_dir: Working directory override.
+            env:         Environment variable overrides.
+            request_id:  Caller-supplied correlation ID.
+
+        Returns:
+            TerminalResult — always populated, never raises.
+        """
+        cmd_command = f"cmd.exe /C {command}"
+        return await self._run(
+            cmd_command,
+            shell=False,
+            timeout=timeout,
+            working_dir=working_dir,
+            env=env,
+            request_id=request_id,
+            display_command=f"cmd: {command[:120]}",
+        )
+
+    async def stream_output(
+        self,
+        command: str,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        working_dir: str | None = None,
+        env: dict[str, str] | None = None,
+        request_id: str | None = None,
+        chunk_size: int = 512,
+    ) -> AsyncIterator[str]:
+        """
+        Stream stdout line-by-line from a shell command as an async generator.
+
+        Yields each decoded line as it becomes available.  The generator
+        completes when the process exits or times out.
+
+        Stderr is captured separately but not yielded; it is accessible
+        via the final TerminalResult if you need it.  Because this is a
+        generator, the caller is responsible for consuming all items or
+        calling aclose() to release the process handle.
+
+        Args:
+            command:     Command string to execute via the shell.
+            timeout:     Seconds before the process is force-killed.
+            working_dir: Working directory override.
+            env:         Environment variable overrides.
+            request_id:  Caller-supplied correlation ID.
+            chunk_size:  Read buffer size in bytes.
+
+        Yields:
+            Decoded stdout lines (newline stripped).
+        """
+        rid = request_id or str(uuid.uuid4())
+        t0 = time.monotonic()
+
+        try:
+            proc = await self._spawn_shell(command, working_dir, env)
+        except Exception as exc:
+            log.exception(f"stream_output spawn failed: {exc}")
+
+            return
+
+        handle = _ProcessHandle(request_id=rid, command=command, process=proc)
+        self._active[rid] = handle
+
+        log.info(
+            "stream_output started (pid=%s, rid=%s, cmd=%s)",
+            proc.pid,
+            rid,
+            command[:80],
+        )
+
+        deadline = t0 + timeout if timeout > 0 else None
+
+        try:
+            while True:
+                if deadline and time.monotonic() > deadline:
+                    log.warning(f"stream_output timeout (rid={rid})")
+
+                    await handle.terminate_graceful()
+                    break
+
+                try:
+                    line_bytes = await asyncio.wait_for(
+                        proc.stdout.readline(),  # type: ignore[union-attr]
+                        timeout=1.0,
+                    )
+                except asyncio.TimeoutError:
+                    if proc.returncode is not None:
+                        break
+                    continue
+
+                if not line_bytes:
+                    break
+
+                yield line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
+
+        except GeneratorExit:
+            log.debug(f"stream_output consumer closed (rid={rid})")
+
+            await handle.terminate_graceful()
+        except Exception as exc:
+            log.exception(f"stream_output error (rid={rid}): {exc}")
+
+        finally:
+            self._active.pop(rid, None)
+            elapsed = (time.monotonic() - t0) * 1000
+            log.info("stream_output finished (rid=%s, duration_ms=%.1f)", rid, elapsed)
+
+    async def cancel_process(self, request_id: str) -> bool:
+        """
+        Send SIGTERM to an active process, then wait up to the grace period.
+
+        Args:
+            request_id: The correlation ID used when the process was started.
+
+        Returns:
+            True if the process was found and termination was attempted.
+            False if no matching process was found.
+        """
+        handle = self._active.get(request_id)
+        if handle is None:
+            log.debug(f"cancel_process: no active process for rid={request_id}")
+
+            return False
+
+        log.info(f"Cancelling process (pid={handle.pid}, rid={request_id})")
+
+        await handle.terminate_graceful()
+        self._active.pop(request_id, None)
+        return True
+
+    async def kill_process(self, request_id: str) -> bool:
+        """
+        Immediately send SIGKILL / TerminateProcess to an active process.
+
+        Args:
+            request_id: The correlation ID used when the process was started.
+
+        Returns:
+            True if the process was found and kill was attempted.
+            False if no matching process was found.
+        """
+        handle = self._active.get(request_id)
+        if handle is None:
+            log.debug(f"kill_process: no active process for rid={request_id}")
+
+            return False
+
+        log.warning(f"Force-killing process (pid={handle.pid}, rid={request_id})")
+
+        await handle.kill_immediate()
+        self._active.pop(request_id, None)
+        return True
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def active_process_count(self) -> int:
+        """Number of processes currently tracked as running."""
+        return len(self._active)
+
+    @property
+    def active_process_ids(self) -> list[str]:
+        """List of request_ids currently associated with live processes."""
+        return list(self._active.keys())
+
+    # ------------------------------------------------------------------
+    # Internal execution core
+    # ------------------------------------------------------------------
+
+    async def _run(
+        self,
+        command: str,
+        *,
+        shell: bool,
+        timeout: float,
+        working_dir: str | None,
+        env: dict[str, str] | None,
+        request_id: str | None,
+        display_command: str | None = None,
+    ) -> TerminalResult:
+        rid = request_id or str(uuid.uuid4())
+        label = display_command or command
+        t0 = time.monotonic()
+
+        log.info(f"Executing command (rid={rid}, shell={shell}): {label[:120]}")
+
+
+        try:
+            if shell:
+                proc = await self._spawn_shell(command, working_dir, env)
+            else:
+                proc = await self._spawn_exec(command, working_dir, env)
+        except Exception as exc:
+            duration_ms = (time.monotonic() - t0) * 1000
+            log.exception(f"Process spawn failed (rid={rid}): {exc}")
+
+            return TerminalResult(
+                success=False,
+                command=label,
+                error=str(exc),
+                duration_ms=duration_ms,
+            )
+
+        handle = _ProcessHandle(request_id=rid, command=label, process=proc)
+        self._active[rid] = handle
+
+        log.debug(f"Process spawned (pid={proc.pid}, rid={rid})")
+
+
+        try:
+            result = await self._collect(handle, label, rid, timeout, t0)
+        finally:
+            self._active.pop(rid, None)
+
+        log.info(
+            "Command finished (rid=%s, rc=%d, duration_ms=%.1f, timed_out=%s)",
+            rid,
+            result.return_code,
+            result.duration_ms,
+            result.timed_out,
+        )
+        return result
+
+    async def _collect(
+        self,
+        handle: _ProcessHandle,
+        label: str,
+        rid: str,
+        timeout: float,
+        t0: float,
+    ) -> TerminalResult:
+        """Wait for the process to finish, capturing stdout/stderr."""
+        timed_out = False
+        cancelled = False
+
+        try:
+            if timeout > 0:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    handle.process.communicate(),
+                    timeout=timeout,
+                )
+            else:
+                stdout_bytes, stderr_bytes = await handle.process.communicate()
+
+            return_code = handle.process.returncode or 0
+
+        except asyncio.TimeoutError:
+            timed_out = True
+            log.warning("Command timed out after %.1fs (rid=%s)", timeout, rid)
+            await handle.terminate_graceful()
+            stdout_bytes = b""
+            stderr_bytes = b""
+            return_code = -1
+
+        duration_ms = (time.monotonic() - t0) * 1000
+
+        stdout = _decode_truncate(stdout_bytes)
+        stderr = _decode_truncate(stderr_bytes)
+
+        success = (return_code == 0) and not timed_out and not cancelled
+
+        return TerminalResult(
+            success=success,
+            command=label,
+            stdout=stdout,
+            stderr=stderr,
+            return_code=return_code,
+            duration_ms=duration_ms,
+            pid=handle.pid,
+            timed_out=timed_out,
+            cancelled=cancelled,
+        )
+
+    # ------------------------------------------------------------------
+    # Process factory helpers
+    # ------------------------------------------------------------------
+
+    async def _spawn_shell(
+        self,
+        command: str,
+        working_dir: str | None,
+        env_overrides: dict[str, str] | None,
+    ) -> asyncio.subprocess.Process:
+        import os
+
+        effective_env = {**os.environ, **(env_overrides or {})}
+
+        return await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=working_dir,
+            env=effective_env,
+        )
+
+    async def _spawn_exec(
+        self,
+        command: str,
+        working_dir: str | None,
+        env_overrides: dict[str, str] | None,
+    ) -> asyncio.subprocess.Process:
+        import os
+        import shlex
+
+        effective_env = {**os.environ, **(env_overrides or {})}
+        args = shlex.split(command)
+
+        return await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=working_dir,
+            env=effective_env,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _decode_truncate(raw: bytes | None) -> str:
+    if not raw:
+        return ""
+    if len(raw) > MAX_OUTPUT_BYTES:
+        raw = raw[:MAX_OUTPUT_BYTES] + b"\n... [output truncated]"
+    return raw.decode("utf-8", errors="replace")
+
+
+def _escape_ps(script: str) -> str:
+    """Minimal escaping for embedding a script string in a powershell -Command arg."""
+    return script.replace('"', '\\"')

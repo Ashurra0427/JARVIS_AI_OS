@@ -1,0 +1,35 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.9, pytest-9.1.1, pluggy-1.6.0 -- c:\Users\bisha\Desktop\JARVIS_AI_OS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\bisha\Desktop\JARVIS_AI_OS
+configfile: pyproject.toml
+plugins: anyio-4.14.0, asyncio-1.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 258 items / 2 errors
+
+=================================== ERRORS ====================================
+_______________ ERROR collecting tests/test_ack_engine_smoke.py _______________
+ImportError while importing test module 'C:\Users\bisha\Desktop\JARVIS_AI_OS\tests\test_ack_engine_smoke.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_ack_engine_smoke.py:6: in <module>
+    from kernel.event_bus.event_bus import Event, EventBus, Priority
+E   ModuleNotFoundError: No module named 'kernel'
+__________ ERROR collecting tests/test_engineering_agent_rewrite.py ___________
+ImportError while importing test module 'C:\Users\bisha\Desktop\JARVIS_AI_OS\tests\test_engineering_agent_rewrite.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_engineering_agent_rewrite.py:27: in <module>
+    from agents.engineering.engineering_agent import EngineeringAgent
+E   ModuleNotFoundError: No module named 'agents'
+=========================== short test summary info ===========================
+ERROR tests/test_ack_engine_smoke.py
+ERROR tests/test_engineering_agent_rewrite.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!!!!!!!!!!!
+============================== 2 errors in 0.50s ==============================

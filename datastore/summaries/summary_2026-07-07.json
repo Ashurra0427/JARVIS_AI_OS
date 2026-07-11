@@ -1,0 +1,17 @@
+{
+  "date_label": "2026-07-07",
+  "generated_at": 1783437560.6525993,
+  "period_start": 1783437560.6525993,
+  "period_end": 1783437560.6525993,
+  "total_events": 0,
+  "decision_stats": null,
+  "execution_stats": null,
+  "alert_stats": null,
+  "health_stats": null,
+  "highlights": [],
+  "insights": [
+    "No critical issues detected. System operated within healthy parameters."
+  ],
+  "anomalies": [],
+  "raw_event_count_by_category": {}
+}

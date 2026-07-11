@@ -1,0 +1,108 @@
+# ============================================================
+# JARVIS AI OS — Memory Configuration
+# ============================================================
+# Controls all four memory stores:
+#   working   → short-term in-process context
+#   episodic  → timestamped event history (SQLite)
+#   semantic  → facts and knowledge (SQLite)
+#   vector    → embedding similarity search (ChromaDB)
+# ============================================================
+
+memory:
+
+  # ----------------------------------------------------------
+  # Working Memory — fast in-process context store
+  # Lost on restart. Used by agents during active sessions.
+  # ----------------------------------------------------------
+  working:
+    enabled: true
+
+    # Max entries before oldest are evicted
+    max_items: 200
+
+    # How long entries live without access (seconds)
+    ttl_s: 3600   # 1 hour
+
+    # Max character length of a single stored value
+    max_value_length: 10000
+
+  # ----------------------------------------------------------
+  # Episodic Memory — event timeline (persists to SQLite)
+  # Requires: pip install aiosqlite
+  # ----------------------------------------------------------
+  episodic:
+    enabled: true
+
+    # SQLite database file (relative to data_dir)
+    db_path: sqlite/episodic.db
+
+    # Max episodes kept before oldest are pruned
+    max_episodes: 10000
+
+    # Delete episodes older than N days (0 = never)
+    retention_days: 90
+
+    # Auto-summarise old episodes to save space
+    auto_summarise: false
+
+  # ----------------------------------------------------------
+  # Semantic Memory — facts and knowledge (persists to SQLite)
+  # Requires: pip install aiosqlite
+  # ----------------------------------------------------------
+  semantic:
+    enabled: true
+
+    # SQLite database file (relative to data_dir)
+    db_path: sqlite/semantic.db
+
+    # Max facts stored
+    max_facts: 50000
+
+    # Confidence threshold below which facts are discarded
+    min_confidence: 0.5
+
+  # ----------------------------------------------------------
+  # Vector Memory — embedding similarity search (ChromaDB)
+  # Requires: pip install chromadb sentence-transformers
+  # ----------------------------------------------------------
+  vector:
+    enabled: true
+
+    # ChromaDB persistence directory (relative to data_dir)
+    persist_dir: vector_store
+
+    # Collection name inside ChromaDB
+    collection_name: jarvis_memory
+
+    # Embedding model (runs locally via sentence-transformers)
+    embedding_model: all-MiniLM-L6-v2
+
+    # Max results returned per similarity query
+    max_results: 10
+
+    # Similarity threshold (0.0–1.0, higher = more similar)
+    similarity_threshold: 0.7
+
+    # Max vectors stored before oldest are pruned
+    max_vectors: 100000
+
+
+# ============================================================
+# Memory Router — controls how memories are stored/retrieved
+# ============================================================
+
+memory_router:
+  # Store every agent output in episodic memory automatically
+  auto_store_agent_output: true
+
+  # Store extracted facts in semantic memory automatically
+  auto_store_facts: true
+
+  # Embed and store in vector memory automatically
+  auto_embed: true
+
+  # Max tokens to embed per entry
+  max_embed_tokens: 512
+
+  # How many similar memories to inject into agent context
+  context_injection_limit: 5

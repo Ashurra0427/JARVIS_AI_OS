@@ -1,0 +1,421 @@
+PS C:\Users\bisha\Desktop\JARVIS_AI_OS> tree /F /A
+Folder PATH listing for volume OS
+Volume serial number is 0000005C 7245:48D6
+C:.
+|   .env
+|   .env.example
+|   jarvis.py
+|   pyproject.toml
+|   README.md
+|   requirements.txt
+|   
++---actions
+|   |   action_coordinator.py
+|   |   action_events.py
+|   |   
+|   +---api
+|   |       api_actions.py
+|   |       api_events.py
+|   |       api_executor.py
+|   |       api_manager.py
+|   |       api_registry.py
+|   |
+|   +---browser
+|   |       browser_actions.py
+|   |       browser_manager.py
+|   |       playwright_engine.py
+|   |
+|   +---desktop
+|   |       application_launcher.py
+|   |       desktop_manager.py
+|   |
+|   +---filesystem
+|   |       file_actions.py
+|   |       file_events.py
+|   |       file_manager.py
+|   |       file_permissions.py
+|   |
+|   +---media
+|   |       media_service.py
+|   |
+|   +---security
+|   |       action_guard.py
+|   |       permission_manager.py
+|   |       policy_engine.py
+|   |
+|   \---terminal
+|           command_executor.py
+|           command_validator.py
+|           terminal_actions.py
+|           terminal_events.py
+|           terminal_manager.py
+|
++---agents
+|   |   __init__.py
+|   |
+|   +---analysis
+|   |   |   analysis_agent.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           analysis_agent.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---automation
+|   |   |   automation_agent.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           automation_agent.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---base
+|   |   |   base_agent.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           base_agent.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---communication
+|   |   |   communication_agent.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           communication_agent.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---coordinator
+|   |   |   coordinator_agent.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           coordinator_agent.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---engineering
+|   |   |   engineering_agent.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           engineering_agent.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---planning
+|   |   |   planning_agent.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           planning_agent.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---research
+|   |   |   research_agent.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           research_agent.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---vision
+|   |   |   vision_agent.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           vision_agent.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   \---__pycache__
+|           __init__.cpython-311.pyc
+|
++---boot
+|       bootstrap.py
+|       dependency_container.py
+|       shutdown.py
+|       startup.py
+|
++---cognition
+|   |   schemas.py
+|   |   __init__.py
+|   |
+|   +---decision
+|   |       decision_engine.py
+|   |
+|   +---intelligence
+|   |       proactive_engine.py
+|   |       project_intelligence.py
+|   |
+|   +---planning
+|   |   |   goal_manager.py
+|   |   |   task_planner.py
+|   |   |   workflow_planner.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           goal_manager.cpython-311.pyc
+|   |           task_planner.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---reasoning
+|   |       reasoning_engine.py
+|   |
+|   +---reflection
+|   |       reflection_engine.py
+|   |
+|   \---__pycache__
+|           __init__.cpython-311.pyc
+|
++---config
+|       agents.yaml
+|       memory.yaml
+|       models.yaml
+|       setting.py
+|       system.yaml
+|       tools.yaml
+|       ui.yaml
+|
++---datastore
+|   +---backups
+|   +---cache
+|   +---sqlite
+|   \---vector_store
+|           chroma.sqlite3
+|
++---docs
+|       jarvis_dependency_graph.svg
+|       jarvis_event_flow.svg
+|
++---integrations
+|   +---custom
+|   +---github
+|   +---google
+|   +---home_assistant
+|   \---mobile
++---interface
+|   |   app.py
+|   |
+|   +---animations
+|   +---assets
+|   +---hud
+|   +---panels
+|   +---themes
+|   +---widgets
+|   \---workspaces
++---kernel
+|   |   __init__.py
+|   |
+|   +---diagnostics
+|   |       debugger.py
+|   |
+|   +---event_bus
+|   |   |   event_bus.py
+|   |   |   event_router.py
+|   |   |
+|   |   \---__pycache__
+|   |           event_bus.cpython-311.pyc
+|   |
+|   +---orchestrator
+|   |   |   orchestrator.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           orchestrator.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---registry
+|   |   |   agent_registry.py
+|   |   |   service_registry.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           agent_registry.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---scheduler
+|   |       scheduler.py
+|   |
+|   +---state
+|   |       state_manager.py
+|   |
+|   \---__pycache__
+|           __init__.cpython-311.pyc
+|
++---memory
+|   |   __init__.py
+|   |
+|   +---episodic
+|   |   |   episodic_memory.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           episodic_memory.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---persistence
+|   |       memory_manager.py
+|   |
+|   +---router
+|   |   |   memory_router.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           memory_router.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---semantic
+|   |   |   semantic_memory.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           semantic_memory.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---summaries
+|   |       daily_summary.py
+|   |
+|   +---vector
+|   |   |   vector_memory.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           vector_memory.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   +---working
+|   |   |   context.py
+|   |   |   __init__.py
+|   |   |
+|   |   \---__pycache__
+|   |           context.cpython-311.pyc
+|   |           __init__.cpython-311.pyc
+|   |
+|   \---__pycache__
+|           __init__.cpython-311.pyc
+|
++---models
+|   |   __init__.py
+|   |
+|   +---context
+|   |       context_builder.py
+|   |       __init__.py
+|   |
+|   +---embeddings
+|   |       embedding_service.py
+|   |
+|   +---local
+|   |   |   base_local.py
+|   |   |   __init__.py
+|   |   |
+|   |   +---deepseek
+|   |   |       deepseek_provider.py
+|   |   |       __init__.py
+|   |   |
+|   |   +---llama
+|   |   |       llama_provider.py
+|   |   |       __init__.py
+|   |   |
+|   |   +---mistral
+|   |   |       mistral_provider.py
+|   |   |       __init__.py
+|   |   |
+|   |   \---qwen
+|   |           qwen_provider.py
+|   |           __init__.py
+|   |
+|   +---prompts
+|   |       prompt_manager.py
+|   |       __init__.py
+|   |
+|   +---providers
+|   |   |   base_provider.py
+|   |   |   __init__.py
+|   |   |
+|   |   +---gemini
+|   |   |       gemini_provider.py
+|   |   |       __init__.py
+|   |   |
+|   |   \---groq
+|   |           groq_provider.py
+|   |           __init__.py
+|   |
+|   \---router
+|           model_router.py
+|           __init__.py
+|
++---observability
+|   +---diagnostics
+|   +---health
+|   |       health_monitor.py
+|   |
+|   +---logging
+|   |   |   logger.py
+|   |   |
+|   |   \---__pycache__
+|   |           logger.cpython-311.pyc
+|   |
+|   +---metrics
+|   \---notifications
+|           notification_center.py
+|
++---perception
+|   +---documents
+|   +---observation
+|   |       activity_observer.py
+|   |       context_classifier.py
+|   |       observer.py
+|   |
+|   +---ocr
+|   |       ocr_pipeline.py
+|   |
+|   +---speech
+|   |       hotword.py
+|   |       interrupt_detector.py
+|   |       live_stt.py
+|   |       microphone.py
+|   |       stt.py
+|   |       stt_router.py
+|   |       tts_router.py
+|   |       voice_coordinator.py
+|   |       voice_event.py
+|   |       voice_session.py
+|   |       wake_listener.py
+|   |
+|   +---vision
+|   |       screenshot_analysis.py
+|   |       screenshot_service.py
+|   |       vision_events.py
+|   |       vision_pipeline.py
+|   |
+|   \---voice
+|           tts.py
+|
++---scripts
++---security
+|   +---audit
+|   +---permissions
+|   +---sandbox
+|   \---secrets
++---tests
++---tools
+|   +---browser_tools
+|   +---file_tools
+|   +---registry
+|   |       tool_registry.py
+|   |
+|   +---system_tools
+|   +---utility_tools
+|   \---web_tools
++---workflows
+|   +---autonomous_tasks
+|   +---project_pipeline
+|   +---reporting_pipeline
+|   +---research_pipeline
+|   \---software_development
++---workspace
+|   +---exports
+|   +---projects
+|   +---reports
+|   \---sessions
+\---__pycache__
+        jarvis.cpython-311.pyc
+

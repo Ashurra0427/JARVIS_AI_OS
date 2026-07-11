@@ -1,0 +1,187 @@
+# ============================================================
+# JARVIS AI OS — Model / LLM Provider Configuration
+# ============================================================
+# API keys must be set in .env, NOT here.
+# These settings control model selection, limits, and routing.
+# ============================================================
+
+llm_providers:
+
+  # ----------------------------------------------------------
+  # Groq (PRIMARY Provider — fast inference, low latency)
+  # Set GROQ_API_KEY in your .env file
+  # Get key: https://console.groq.com/keys
+  # ----------------------------------------------------------
+  groq:
+    enabled: true
+    model: llama-3.3-70b-versatile
+    max_tokens: 4096
+    temperature: 0.7
+    timeout_s: 15
+    max_retries: 2
+
+  # ----------------------------------------------------------
+  # Gemini (SECONDARY Provider — reasoning, structured output)
+  # Set GEMINI_API_KEY in your .env file
+  # Get key: https://aistudio.google.com/app/apikey
+  # ----------------------------------------------------------
+  gemini:
+    enabled: true
+    model: gemini-2.5-flash
+    max_tokens: 8192
+    temperature: 0.7
+    timeout_s: 60
+    max_retries: 2
+
+  # ----------------------------------------------------------
+  # OpenAI (Optional — disabled by default)
+  # Set OPENAI_API_KEY in your .env file
+  # ----------------------------------------------------------
+  openai:
+    enabled: false
+    model: gpt-4o
+    max_tokens: 8192
+    temperature: 0.7
+    timeout_s: 60
+    max_retries: 3
+
+  # ----------------------------------------------------------
+  # Qwen Local Fast Path (OpenVINO IR / ONNX Runtime GenAI)
+  # No network required — runs Qwen2.5-Coder directly on CPU/GPU/NPU.
+  #
+  #   engine: openvino   -> models/local/qwen_openvino/qwen_openvino_provider.py
+  #                          expects IR files in models/local/qwen_coder/
+  #                          (openvino_model.xml/.bin, openvino_tokenizer.*, ...)
+  #   engine: onnx       -> models/local/qwen_onnx/qwen_onnx_provider.py
+  #                          expects model.onnx + genai_config.json in
+  #                          models/local/qwen_onnx/ (STUB until exported)
+  #
+  # device: AUTO lets OpenVINO pick NPU > GPU > CPU automatically.
+  # ----------------------------------------------------------
+  qwen_local:
+    enabled: true
+    engine: openvino       # "openvino" | "onnx"
+    device: AUTO           # OpenVINO only: AUTO | CPU | GPU | NPU
+    model_dir: models/local/qwen_coder   # openvino engine
+    onnx_model_dir: models/local/qwen_onnx
+    max_tokens: 1024
+    temperature: 0.2
+    timeout_s: 45
+
+  # ----------------------------------------------------------
+  # Local / Ollama (FINAL FALLBACK — no network required)
+  # No API key needed. Install: https://ollama.com/download
+  # Pull a model: ollama pull qwen2.5-coder:7b
+  # This MUST remain enabled so the system always has a response.
+  # ----------------------------------------------------------
+  local:
+    enabled: true
+    model: qwen2.5:1.5b
+    base_url: http://localhost:11434
+    max_tokens: 4096
+    temperature: 0.7
+    timeout_s: 45
+    max_retries: 1
+
+
+# ============================================================
+# Local Model Presets (Phase 4)
+# ============================================================
+# These are NOT separate router providers. The router owns exactly ONE
+# OllamaProvider (see models/router/model_router.py design rule 3); these
+# presets are just tuned defaults (temperature, timeout, description) for
+# specific Ollama tags, surfaced to the HUD model picker via
+# GET /api/model/presets so quick-select buttons can populate without
+# Ollama needing to be running at page load.
+#
+# Activating a preset is just:
+#   ModelSwitcher.switch("ollama", <tag>)
+#
+# These values were migrated out of the now-deleted
+# models/local/llama/llama_provider.py, models/local/mistral/mistral_provider.py,
+# and models/local/deepseek/deepseek_provider.py — each was a thin
+# BaseLocalProvider subclass duplicating Ollama connection handling that
+# OllamaProvider already provides.
+# ============================================================
+
+local_model_presets:
+  qwen_fast:
+    tag: "qwen2.5:1.5b"
+    temperature: 0.7
+    timeout_s: 45
+    description: "Fastest local — fits small-VRAM GPUs (2GB+)"
+    vram_fit: "good"
+  llama:
+    tag: "llama2:latest"
+    temperature: 0.7
+    timeout_s: 90
+    description: "Compatibility & secondary local"
+    vram_fit: "cpu_spillover"
+  mistral:
+    tag: "mistral:7b"
+    temperature: 0.7
+    timeout_s: 60
+    description: "Lightweight assistant"
+    vram_fit: "cpu_spillover"
+  deepseek_r1:
+    tag: "deepseek-r1:latest"
+    temperature: 0.1
+    timeout_s: 180
+    description: "Reflection & reasoning"
+    vram_fit: "cpu_spillover"
+  deepseek_coder:
+    tag: "deepseek-coder:latest"
+    temperature: 0.3
+    timeout_s: 120
+    description: "Code review & debugging"
+    vram_fit: "cpu_spillover"
+
+# vram_fit is informational only, used by the HUD to flag presets that will
+# likely spill some layers from a small (<=4GB) GPU into system RAM, which
+# the docs consistently show costs 5-20x in tokens/sec versus full GPU
+# residency — not a hard block, just a "this preset will be slower on a
+# 2-4GB card" hint. "good" = fits comfortably in 2GB at default num_ctx.
+# "cpu_spillover" = the 7B-class weights alone (~4.2GB Q4) exceed 2GB VRAM.
+
+
+# ============================================================
+# Model Router v3.1 — 4-tier fallback architecture
+# ============================================================
+# TIER 1: Groq       — fast chat, code, tool tasks (cloud)
+# TIER 2: Qwen Local — OpenVINO/ONNX local fast-path (offline, no API cost)
+# TIER 3: Gemini     — reasoning, analysis, structured generation (cloud)
+# TIER 4: Local      — Ollama final fallback, works offline, never fails
+#
+# The system ALWAYS tries all tiers before giving up.
+# ============================================================
+
+model_router:
+  # Default provider for unclassified requests
+  default_provider: groq
+
+  # Ordered fallback chain — tried left to right on provider failure.
+  # "local" MUST be last to guarantee a response even if both APIs are down.
+  fallback_chain:
+    - groq
+    - qwen_local
+    - gemini
+    - local
+
+  # Route specific task types to the most suitable starting provider.
+  # The fallback chain still applies if the first provider fails.
+  # Keys must match TaskType enum values in models/router/model_router.py.
+  task_routing:
+    chat:                groq      # Low latency priority
+    code:                groq      # Fast code generation
+    fast_tool:           groq      # Quick tool calls
+    reasoning:           gemini    # Deep analysis, multi-step reasoning
+    agent_automation:    groq      # Quick scripting
+    agent_communication: groq      # Fast drafting
+    agent_engineering:   groq      # Code generation
+    agent_research:      gemini    # Long context + grounding
+    agent_analysis:      gemini    # Long-context analysis
+    agent_planning:      gemini    # Structured planning
+    agent_vision:        gemini    # Multimodal
+
+  # Max tokens sent as context (leave headroom for response tokens)
+  max_context_tokens: 6000

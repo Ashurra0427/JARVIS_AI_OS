@@ -1,0 +1,85 @@
+# ============================================================
+# JARVIS AI OS — System Configuration
+# ============================================================
+# Controls core runtime behaviour, environment, and paths.
+# All values here override dataclass defaults in settings.py.
+# Environment variables (JARVIS_SYSTEM__KEY) override these.
+# ============================================================
+
+system:
+  # development | staging | production
+  environment: development
+
+  # Where JARVIS stores its data (relative to project root)
+  data_dir: datastore
+
+  # How long bootstrap waits for each phase before failing (seconds)
+  startup_timeout_s: 60
+
+  # How long graceful shutdown waits before forcing stop (seconds)
+  shutdown_timeout_s: 30
+
+
+# ============================================================
+# Logging
+# ============================================================
+
+logging:
+  # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  level: INFO
+
+  # text = human-readable console output
+  # json = structured JSON for log aggregators
+  format: text
+
+  # Write logs to file as well as console
+  file_enabled: true
+  file_path: logs/jarvis.log
+
+  # Max size per log file before rotation
+  max_bytes: 10485760   # 10 MB
+
+  # Number of rotated files to keep
+  backup_count: 5
+
+  # Print to console (always true in development)
+  console: true
+
+
+# ============================================================
+# Event Bus
+# ============================================================
+
+event_bus:
+  # Max events queued before back-pressure kicks in
+  max_queue_size: 10000
+
+  # Async worker threads processing events
+  worker_threads: 4
+
+  # Dead-letter queue for unhandled events
+  deadletter_enabled: true
+
+  # Allow replaying past events on reconnect
+  replay_enabled: true
+
+  # How old an event can be and still be replayed (seconds)
+  max_replay_age_s: 3600
+
+
+# ============================================================
+# Health Monitor
+# ============================================================
+
+health:
+  # How often health checks run (seconds)
+  check_interval_s: 30
+
+  # Fraction of checks that must pass to stay HEALTHY
+  degraded_threshold: 0.8
+
+  # Below this fraction → UNHEALTHY
+  unhealthy_threshold: 0.5
+
+  # Rolling window of check results kept per component
+  history_window: 10
