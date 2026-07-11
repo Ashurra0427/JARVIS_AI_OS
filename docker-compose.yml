@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  jarvis:
+    build: .
+    container_name: jarvis-ai-os
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      - "8765:8765"
+    volumes:
+      - ./datastore:/app/datastore
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    environment:
+      - JARVIS_SYSTEM__ENVIRONMENT=production
+      - JARVIS_SYSTEM__DATA_DIR=/app/datastore
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G

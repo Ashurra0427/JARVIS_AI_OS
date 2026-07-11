@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "JARVIS AI OS — event-driven AI operating system (agents, memory, cognition, perception, tools, HUD)."
 readme = "docs/Readme.md"
 requires-python = ">=3.11,<3.13"
-license = { text = "Proprietary" }
+license = { text = "MIT" }
 
 # NOTE on Python version: audioop (used by perception/speech/hotword.py and
 # microphone.py) was removed in Python 3.13. Stay on 3.11 or 3.12 until those
@@ -135,6 +135,9 @@ include = [
   "wakeword*", "workflows*",
 ]
 exclude = ["tests*", "archive*", "test_chroma*", "logs*", "workspace*"]
+
+[tool.setuptools.py-modules]
+py-modules = ["server", "main", "start"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

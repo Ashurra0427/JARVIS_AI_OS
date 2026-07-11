@@ -19,7 +19,7 @@ PYTHON       ?= python3
 PIP          ?= $(PYTHON) -m pip
 PROJECT_NAME  = JARVIS_AI_OS
 VERSION      ?= $(shell git describe --tags --always 2>/dev/null || echo "dev")
-DIST_DIR      = C:/Users/bisha/Desktop
+DIST_DIR      = dist
 BUILD_DIR      = build
 RELEASE_ZIP   = $(DIST_DIR)/$(PROJECT_NAME)_$(VERSION).zip
 
