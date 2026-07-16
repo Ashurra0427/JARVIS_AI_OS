@@ -43,7 +43,7 @@ dependencies = [
   "aiosqlite>=0.19.0",
   "chromadb>=0.5.0",
   "sentence-transformers>=3.0.0",
-  "numpy>=1.26.0,<2.0",  # deepfilternet 0.5.6 requires numpy<2.0 — do NOT upgrade
+  "numpy>=1.26.0,<3.0",  # deepfilternet 0.5.6 requires numpy<2.0 — do NOT upgrade
 
   # Speech — STT
   "faster-whisper>=1.0.0",
