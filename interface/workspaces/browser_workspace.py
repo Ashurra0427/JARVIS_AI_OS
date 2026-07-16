@@ -340,11 +340,25 @@ class _BrowserWorker(QObject):
 
         async def _shutdown():
             try:
+                if self._page:
+                    try:
+                        await self._page.close()
+                    except Exception:
+                        pass
+                    self._page = None
                 if self._engine:
                     await self._engine.stop()
             except Exception:
                 log.debug("Error stopping Playwright engine", exc_info=True)
             finally:
+                pending = [
+                    t for t in asyncio.all_tasks(self._loop)
+                    if not t.done() and t != asyncio.current_task()
+                ]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
                 self._loop.stop()
 
         if self._loop.is_running():
@@ -1073,24 +1087,11 @@ class BrowserWorkspace(QWidget):
     # ── Cleanup ───────────────────────────────────────────────────────────
 
     def shutdown(self) -> None:
-        """Stop the Playwright worker thread.
-
-        P13 bug fix: this used to live only in closeEvent(), but
-        BrowserWorkspace is a *child* widget living inside JarvisWindow's
-        QStackedWidget — Qt only delivers closeEvent to actual top-level
-        windows, so this cleanup never ran in practice. The background
-        _BrowserThread (an infinite `while not isInterruptionRequested()`
-        loop) kept running past app shutdown, which is why the process
-        could abort/hang on exit ("QThread: Destroyed while thread is
-        still running"). main_window.py's closeEvent now calls this
-        explicitly. closeEvent is kept below as a harmless no-op fallback
-        for the rare case this widget is ever shown standalone.
-        """
         if self._worker:
             self._worker.stop()
         if self._thread:
             self._thread.requestInterruption()
-            self._thread.wait(1000)
+            self._thread.wait(5000)
 
     def closeEvent(self, e):
         self.shutdown()

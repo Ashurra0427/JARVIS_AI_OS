@@ -136,8 +136,5 @@ include = [
 ]
 exclude = ["tests*", "archive*", "test_chroma*", "logs*", "workspace*"]
 
-[tool.setuptools.py-modules]
-py-modules = ["server", "main", "start"]
-
 [tool.pytest.ini_options]
 pythonpath = ["."]

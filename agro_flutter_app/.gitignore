@@ -1,0 +1,21 @@
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.iml
+.idea/
+
+# Android
+**/android/local.properties
+**/android/key.properties
+**/android/**/*.keystore
+**/android/**/*.jks
+
+# iOS/macOS
+**/ios/Flutter/.last_build_id
+**/Pods/
+
+# Web
+**/web/flutter_service_worker.js
