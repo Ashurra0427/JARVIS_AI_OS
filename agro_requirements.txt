@@ -30,7 +30,7 @@ aiosqlite>=0.19.0               # agents/agro/database.py, customer_portal.py
 # ── Excel report export ──────────────────────────────────────────────────
 # agents/agro/excel_exporter.py raises (does not gracefully degrade) if
 # this is missing — daily/monthly report export will fail without it.
-openpyxl>=3.1.0
+openpyxl>=3.1.5
 
 # ── Config ────────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0            # loads .env (AGRO_PORT, AGRO_TTS, etc.)
