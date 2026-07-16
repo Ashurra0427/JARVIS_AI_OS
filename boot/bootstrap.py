@@ -38,7 +38,15 @@ from kernel.registry.service_registry import ServiceDescriptor, ServiceRegistry
 from boot.dependency_container import DependencyContainer
 from observability.health.health_monitor import HealthCheck, HealthMonitor
 
-log = get_logger(__name__)
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    """Parse a boolean environment variable (true/false/1/0/yes/no)."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on", "y")
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +368,24 @@ class Bootstrap:
             emergency_model=os.getenv("OLLAMA_EMERGENCY_MODEL", "qwen3:4b"),
         )
         self._container.register_instance("model_router", model_router)
+
+        # ── Smart (task-aware) routing wrapper ──
+        # Wraps the base ModelRouter with capability/cost/privacy-aware
+        # provider selection. Enabled by JARVIS_SMART_ROUTING (default true).
+        # The wrapper is what agents and the server should prefer to call so
+        # free cloud tiers and local models rotate by task automatically.
+        try:
+            from models.router.smart_router import wrap_router
+            _smart_on = _env_flag("JARVIS_SMART_ROUTING", True)
+            _prefer_local = _env_flag("JARVIS_PREFER_LOCAL", False)
+            smart_router = wrap_router(
+                model_router,
+                smart_routing=_smart_on,
+                prefer_local_default=_prefer_local,
+            )
+            self._container.register_instance("smart_model_router", smart_router)
+        except Exception as exc:
+            log.warning("SmartModelRouter wrap failed (non-fatal)", error=str(exc))
 
         # ── Register agent_defaults from agents.yaml in DI container ──
         try:

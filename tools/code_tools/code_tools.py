@@ -342,6 +342,65 @@ def code_test(path: str, timeout: int = 60, extra_args: list = None) -> dict:
 # ──────────────────────────────────────────────
 
 
+# ---------------------------------------------------------------------------
+# Workspace editor tools (safe real-file coding surface)
+# ---------------------------------------------------------------------------
+
+_WORKSPACE_ROOT = os.getenv("JARVIS_WORKSPACE_ROOT") or os.getcwd()
+_workspace_editor = None
+_workspace_editor_lock = None
+
+
+def _get_workspace_editor() -> "WorkspaceEditor":
+    """Lazily construct (and cache) a singleton WorkspaceEditor rooted at the
+    configured workspace. Thread-safe via a lock created on first use."""
+    global _workspace_editor, _workspace_editor_lock
+    if _workspace_editor_lock is None:
+        import threading
+        _workspace_editor_lock = threading.Lock()
+    with _workspace_editor_lock:
+        if _workspace_editor is None:
+            from tools.code_tools.workspace_editor import WorkspaceEditor
+            _workspace_editor = WorkspaceEditor(_WORKSPACE_ROOT)
+    return _workspace_editor
+
+
+def code_workspace_read(path: str) -> dict:
+    """Read a file from the workspace. Returns content or an error."""
+    res = _get_workspace_editor().read(path)
+    return res.as_dict()
+
+
+def code_workspace_write(path: str, content: str, dry_run: bool = False) -> dict:
+    """Write/create a file in the workspace (atomic). dry_run returns a diff."""
+    res = _get_workspace_editor().write(path, content, dry_run=dry_run)
+    return res.as_dict()
+
+
+def code_workspace_patch(
+    path: str, start_line: int, end_line: int, new_text: str, dry_run: bool = False
+) -> dict:
+    """Replace lines [start_line..end_line] (1-indexed) with new_text."""
+    res = _get_workspace_editor().patch_lines(
+        path, int(start_line), int(end_line), new_text, dry_run=dry_run
+    )
+    return res.as_dict()
+
+
+def code_workspace_delete(path: str, missing_ok: bool = True) -> dict:
+    """Delete a file in the workspace (never directories)."""
+    res = _get_workspace_editor().delete(path, missing_ok=missing_ok)
+    return res.as_dict()
+
+
+def code_workspace_undo() -> dict:
+    """Undo the last workspace mutation (write/patch/delete)."""
+    res = _get_workspace_editor().undo()
+    if res is None:
+        return {"ok": False, "detail": "nothing to undo"}
+    return res.as_dict()
+
+
 def register_code_tools(registry: "ToolRegistry", event_bus=None) -> list[str]:
     """Register all code tools into the provided ToolRegistry."""
     from tools.registry.tool_registry import ToolDefinition
@@ -431,6 +490,41 @@ def register_code_tools(registry: "ToolRegistry", event_bus=None) -> list[str]:
             description="Run pytest on a file or directory and return results.",
             tags=["code", "test", "pytest", "quality"],
             timeout_s=120.0,
+        ),
+        ToolDefinition(
+            name="code.workspace_read",
+            handler=_wrap(code_workspace_read, "code.workspace_read"),
+            description="Read a file from the JARVIS workspace (root-bounded).",
+            tags=["code", "workspace", "file", "read"],
+            timeout_s=15.0,
+        ),
+        ToolDefinition(
+            name="code.workspace_write",
+            handler=_wrap(code_workspace_write, "code.workspace_write"),
+            description="Write/create a workspace file atomically. Set dry_run=true to preview the diff.",
+            tags=["code", "workspace", "file", "write"],
+            timeout_s=30.0,
+        ),
+        ToolDefinition(
+            name="code.workspace_patch",
+            handler=_wrap(code_workspace_patch, "code.workspace_patch"),
+            description="Replace a line range in a workspace file with new text (diff-preview capable).",
+            tags=["code", "workspace", "file", "patch", "edit"],
+            timeout_s=30.0,
+        ),
+        ToolDefinition(
+            name="code.workspace_delete",
+            handler=_wrap(code_workspace_delete, "code.workspace_delete"),
+            description="Delete a workspace file (directories refused).",
+            tags=["code", "workspace", "file", "delete"],
+            timeout_s=15.0,
+        ),
+        ToolDefinition(
+            name="code.workspace_undo",
+            handler=_wrap(code_workspace_undo, "code.workspace_undo"),
+            description="Undo the last workspace mutation.",
+            tags=["code", "workspace", "undo"],
+            timeout_s=10.0,
         ),
     ]
 

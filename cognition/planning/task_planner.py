@@ -44,8 +44,52 @@ AGENT_CAPABILITIES: dict[str, list[str]] = {
 }
 
 
+def _task_type_to_agent(task_type: str) -> str:
+    """Map a smart-router TaskType string to its owning specialist agent."""
+    mapping = {
+        "code": "engineering",
+        "agent_engineering": "engineering",
+        "agent_research": "research",
+        "agent_analysis": "analysis",
+        "agent_planning": "planning",
+        "agent_automation": "automation",
+        "agent_communication": "communication",
+        "agent_vision": "vision",
+        "reasoning": "analysis",
+        "fast_tool": "coordinator",
+        "chat": "coordinator",
+        "offline": "coordinator",
+    }
+    return mapping.get(task_type, "coordinator")
+
+
 def _select_agent(description: str, tags: list[str]) -> str:
-    """Keyword fallback — used when model router is unavailable."""
+    """
+    Keyword fallback — used when model router is unavailable.
+
+    Enhanced: first tries the deterministic TaskClassifier (shared vocabulary
+    with the SmartModelRouter) so agent selection is consistent with how the
+    system routes model inference. Falls back to the keyword scorer, then to
+    coordinator.
+    """
+    try:
+        from models.router.task_classifier import get_classifier
+        cls = get_classifier()
+        # Build a pseudo-agent name from the dominant tag if present.
+        tag_agent = None
+        for t in tags:
+            cand = t.lower().replace("agent_", "")
+            if cand in AGENT_CAPABILITIES:
+                tag_agent = cand
+                break
+        if tag_agent:
+            return tag_agent
+        c = cls.classify(description)
+        agent = _task_type_to_agent(c.task_type)
+        if agent in AGENT_CAPABILITIES:
+            return agent
+    except Exception:
+        pass
     text = (description + " " + " ".join(tags)).lower()
     scores: dict[str, int] = {}
     for agent, keywords in AGENT_CAPABILITIES.items():
@@ -56,7 +100,8 @@ def _select_agent(description: str, tags: list[str]) -> str:
 
 async def _select_agent_llm(model_router, description: str, tags: list[str]) -> str:
     """
-    LLM-based agent selection. Falls back to keyword matching if model unavailable.
+    LLM-based agent selection. Falls back to keyword/classifier matching if
+    model unavailable.
     """
     if model_router is None:
         return _select_agent(description, tags)
@@ -77,7 +122,11 @@ async def _select_agent_llm(model_router, description: str, tags: list[str]) -> 
             temperature=0.0,
         )
         name = response.content.strip().lower().split()[0]
-        return name if name in agents else _select_agent(description, tags)
+        if name in agents:
+            return name
+        # Non-conforming model output — try the classifier before the
+        # keyword fallback so routing stays consistent.
+        return _select_agent(description, tags)
     except Exception:
         return _select_agent(description, tags)
 
